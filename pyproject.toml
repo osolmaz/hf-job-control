@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hf-job-control"
+version = "0.1.0"
+description = "Cooperative pause, stop, and resume control for detached Hugging Face Jobs"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Onur Solmaz" }]
+dependencies = ["huggingface-hub>=1.2,<2"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+
+[project.scripts]
+hf-job-control = "hf_job_control.cli:main"
+
+[dependency-groups]
+dev = [
+  "jsonschema>=4.23,<5",
+  "mypy>=1.15,<2",
+  "mutmut>=3,<4",
+  "pip-audit>=2.9,<3",
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "ruff==0.12.12",
+  "types-jsonschema>=4.23,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hf_job_control"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["hf_job_control"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ANN", "B", "C4", "C90", "DTZ", "E", "F", "I", "N", "PERF", "PIE", "PT", "PTH", "RUF", "S", "SIM", "TID", "TRY", "UP"]
+ignore = ["TRY003"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+warn_unreachable = true
+
+[tool.mutmut]
+source_paths = [
+  "src/hf_job_control/checkpoint.py",
+  "src/hf_job_control/controller.py",
+]
+also_copy = [
+  "schemas/",
+  "src/hf_job_control/__init__.py",
+  "src/hf_job_control/canary.py",
+  "src/hf_job_control/cli.py",
+  "src/hf_job_control/launch.py",
+  "src/hf_job_control/metrics.py",
+  "src/hf_job_control/models.py",
+  "src/hf_job_control/py.typed",
+  "src/hf_job_control/stores.py",
+]
+pytest_add_cli_args_test_selection = ["tests/"]

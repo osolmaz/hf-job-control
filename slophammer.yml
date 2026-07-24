@@ -1,0 +1,18 @@
+python:
+  coverage:
+    threshold: 85
+    paths:
+      - src/hf_job_control
+  complexity:
+    max: 8
+  dry:
+    max_findings: 0
+    paths:
+      - src/hf_job_control
+    copied_blocks:
+      enabled: true
+      min_tokens: 100
+  mutation:
+    targets:
+      - src/hf_job_control/models.py
+      - src/hf_job_control/controller.py

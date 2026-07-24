@@ -1,0 +1,40 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - name: Verify release tag and commit
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="$(uv run --no-project python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          print(tomllib.loads(Path('pyproject.toml').read_text())['project']['version'])
+          PY
+          )"
+          test "$RELEASE_TAG" = "v$VERSION"
+          git merge-base --is-ancestor HEAD origin/main
+      - run: uv build
+      - run: uvx twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
