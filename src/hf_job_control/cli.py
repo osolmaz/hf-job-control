@@ -13,6 +13,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from skillflag import (
+    SkillflagOptions,
+    find_skills_root,
+    handle_skillflag,
+)
+
 from hf_job_control.checkpoint import read_manifest
 from hf_job_control.launch import HubJobLauncher, LaunchedJob
 from hf_job_control.models import (
@@ -330,9 +336,27 @@ def dispatch(args: argparse.Namespace) -> JsonObject:
     return handler(args)
 
 
+def _handle_skillflag(argv: list[str]) -> int | None:
+    if "--skill" not in argv:
+        return None
+    return int(
+        handle_skillflag(
+            ["hf-job-control", *argv],
+            SkillflagOptions(
+                skills_root=find_skills_root(__file__),
+                include_bundled_skill=False,
+            ),
+        )
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    skillflag_result = _handle_skillflag(raw_args)
+    if skillflag_result is not None:
+        return skillflag_result
     try:
-        result = dispatch(parse_args(argv))
+        result = dispatch(parse_args(raw_args))
     except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

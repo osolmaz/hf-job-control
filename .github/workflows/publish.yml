@@ -179,5 +179,14 @@ jobs:
           print(f"Installed {hf_job_control.__name__} wheel exposes {skill}")
           PY
 
+          uv run --python 3.13 --no-project --with "$wheel" \
+            hf-job-control --skill list > /tmp/hf-job-control-skill-list.txt
+          test "$(wc -l < /tmp/hf-job-control-skill-list.txt)" -eq 1
+          test "$(cut -f1 /tmp/hf-job-control-skill-list.txt)" = "hf-job-control"
+
+          uv run --python 3.13 --no-project --with "$wheel" \
+            hf-job-control --skill export hf-job-control > /tmp/hf-job-control-skill.tar
+          tar -tf /tmp/hf-job-control-skill.tar | grep -Fx "hf-job-control/SKILL.md"
+
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always

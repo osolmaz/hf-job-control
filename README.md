@@ -26,20 +26,28 @@ uv tool install "hf-job-control @ git+https://github.com/osolmaz/hf-job-control@
 
 ## Agent skill
 
-The repository includes a comprehensive Agent Skills package under
-[`skills/hf-job-control`](skills/hf-job-control/SKILL.md). It covers operator
-workflows, worker integration, protocol records, incident recovery, and launch
-or completion audits.
+The Python package includes the comprehensive Agent Skills package under
+[`skills/hf-job-control`](skills/hf-job-control/SKILL.md). The CLI exposes it
+through the Skillflag interface:
 
-Pi can load only the public HF Job Control skill from a pinned Git revision:
+```bash
+hf-job-control --skill list
+hf-job-control --skill show hf-job-control
+hf-job-control --skill export hf-job-control | skill-install --agent codex --scope user
+```
+
+The skill covers operator workflows, worker integration, protocol records,
+incident recovery, and launch or completion audits. The export contains its
+references, schemas, agent metadata, and launch-specification example.
+
+Pi can also load the public HF Job Control skill from a pinned Git revision:
 
 ```bash
 pi install git:github.com/osolmaz/hf-job-control@<tag-or-commit>
 ```
 
-The `package.json` manifest excludes the repository's internal documentation
-helper. Other Agent Skills-compatible tools can load or copy the
-`skills/hf-job-control` directory directly.
+The `package.json` manifest and the Python CLI expose only the public skill.
+The repository's internal documentation helper is excluded.
 
 ## Operator workflow
 

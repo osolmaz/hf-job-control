@@ -304,10 +304,11 @@ wheels = [
 
 [[package]]
 name = "hf-job-control"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "huggingface-hub" },
+    { name = "skillflag" },
 ]
 
 [package.dev-dependencies]
@@ -323,7 +324,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "huggingface-hub", specifier = ">=1.2,<2" }]
+requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.2,<2" },
+    { name = "skillflag", specifier = ">=0.1,<0.2" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1289,6 +1293,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/5b/5e1c117ac84e3cefcf8d7a7f6b2461795a87e20869da065a5c087149060b/setproctitle-1.3.7-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:b1cac6a4b0252b8811d60b6d8d0f157c0fdfed379ac89c25a914e6346cf355a1", size = 12587, upload-time = "2025-09-05T12:51:21.195Z" },
     { url = "https://files.pythonhosted.org/packages/73/02/b9eadc226195dcfa90eed37afe56b5dd6fa2f0e5220ab8b7867b8862b926/setproctitle-1.3.7-pp311-pypy311_pp73-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:f1704c9e041f2b1dc38f5be4552e141e1432fba3dd52c72eeffd5bc2db04dc65", size = 14286, upload-time = "2025-09-05T12:51:22.61Z" },
     { url = "https://files.pythonhosted.org/packages/28/26/1be1d2a53c2a91ec48fa2ff4a409b395f836798adf194d99de9c059419ea/setproctitle-1.3.7-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:b08b61976ffa548bd5349ce54404bf6b2d51bd74d4f1b241ed1b0f25bce09c3a", size = 13282, upload-time = "2025-09-05T12:51:24.094Z" },
+]
+
+[[package]]
+name = "skillflag"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/6a/f202dbbfe1deafbcadb98462cea1f01d278e9ba035def74c69f4f30c7744/skillflag-0.1.0.tar.gz", hash = "sha256:1c84c7d294578f6d055b285ca448178e0c5f8c81d009c7bcf37f9cd343c9709c", size = 34648, upload-time = "2026-07-24T14:51:32.481Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/83/58692296cca2e430db48213d49007057087b581a1956428f55da0944b2f8/skillflag-0.1.0-py3-none-any.whl", hash = "sha256:ab4e731e1cff5f64be7a5afd1feafd4bd1ab458060550498c482cbd4e5b47227", size = 24208, upload-time = "2026-07-24T14:51:31.535Z" },
 ]
 
 [[package]]

@@ -47,4 +47,4 @@ Keep `slophammer.yml` and `.github/workflows/ci.yml` aligned with the
 - Treat logical run IDs and physical Hugging Face Job IDs as separate identities.
 - Add nearby tests for every behavior change.
 
-**Attention agent!** Before creating ANY documentation, use the `simpledoc` skill in `skills/simpledoc/SKILL.md`.
+**Attention agent!** Before creating ANY documentation, use the `simpledoc` skill in `internal/skills/simpledoc/SKILL.md`.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -116,8 +117,21 @@ def test_bundled_launch_spec_parses_with_domain_model() -> None:
     assert "ATTEMPT_ID" not in spec.environment
 
 
+def test_python_package_uses_skillflag_for_the_public_skill() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    corpus = "\n".join(path.read_text(encoding="utf-8") for path in _markdown_files())
+
+    assert "skillflag>=0.1,<0.2" in project["dependencies"]
+    assert "hf-job-control --skill list" in corpus
+    assert "hf-job-control --skill show hf-job-control" in corpus
+    assert "hf-job-control --skill export hf-job-control" in corpus
+
+
 def test_pi_manifest_exposes_only_the_public_hf_job_control_skill() -> None:
     manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
 
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+    assert manifest["version"] == project["version"]
     assert "pi-package" in manifest["keywords"]
     assert manifest["pi"]["skills"] == ["./skills/hf-job-control"]

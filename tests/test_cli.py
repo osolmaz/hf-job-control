@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import tarfile
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -417,3 +419,52 @@ def test_cli_reports_missing_configuration(capsys: pytest.CaptureFixture[str]) -
 
     assert cli.main(["show", "run"]) == 2
     assert "HF_JOB_CONTROL_REPO" in capsys.readouterr().err
+
+
+def test_cli_lists_only_the_hf_job_control_skill(
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    assert cli.main(["--skill", "list"]) == 0
+    captured = capsysbinary.readouterr()
+
+    assert captured.err == b""
+    assert captured.out.startswith(b"hf-job-control\t")
+    assert captured.out.count(b"\n") == 1
+
+    assert cli.main(["--skill", "list", "--json"]) == 0
+    payload = json.loads(capsysbinary.readouterr().out)
+    assert [skill["id"] for skill in payload["skills"]] == ["hf-job-control"]
+    assert payload["skills"][0]["digest"].startswith("sha256:")
+
+
+def test_cli_shows_and_exports_the_complete_bundled_skill(
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    skill_root = Path(__file__).resolve().parents[1] / "skills" / "hf-job-control"
+
+    assert cli.main(["--skill", "show", "hf-job-control"]) == 0
+    assert capsysbinary.readouterr().out == (skill_root / "SKILL.md").read_bytes()
+
+    assert cli.main(["--skill", "export", "hf-job-control"]) == 0
+    first = capsysbinary.readouterr().out
+    assert cli.main(["--skill", "export", "hf-job-control"]) == 0
+    second = capsysbinary.readouterr().out
+    assert first == second
+
+    with tarfile.open(fileobj=io.BytesIO(first), mode="r:") as archive:
+        names = {member.name for member in archive.getmembers() if member.isfile()}
+    expected = {
+        f"hf-job-control/{path.relative_to(skill_root).as_posix()}"
+        for path in skill_root.rglob("*")
+        if path.is_file()
+    }
+    assert names == expected
+
+
+def test_cli_skill_errors_use_the_skillflag_exit_code(
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    assert cli.main(["--skill", "show", "missing"]) == 1
+    captured = capsysbinary.readouterr()
+    assert captured.out == b""
+    assert captured.err == b"Skill not found: missing\n"
