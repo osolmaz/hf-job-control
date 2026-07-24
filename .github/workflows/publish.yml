@@ -1,0 +1,183 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # PyPI trusted publishing requires a GitHub-hosted runner.
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: astral-sh/setup-uv@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main --depth=1
+
+          uv run --python 3.13 --no-project python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          release_tag = os.environ.get("RELEASE_TAG", "")
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", release_tag):
+              sys.exit(
+                  f"Release tags must match vX.Y.Z; received {release_tag or '<missing>'}."
+              )
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          expected = f"v{version}"
+          if release_tag != expected:
+              sys.exit(
+                  f"Release tag {release_tag} does not match pyproject version {version}; "
+                  f"expected {expected}."
+              )
+
+          tag_commit = subprocess.check_output(
+              ["git", "rev-list", "-n", "1", release_tag],
+              text=True,
+          ).strip()
+          ancestor = subprocess.run(
+              ["git", "merge-base", "--is-ancestor", tag_commit, "origin/main"],
+              check=False,
+          )
+          if ancestor.returncode != 0:
+              sys.exit(f"Tagged commit {tag_commit} is not contained in origin/main.")
+
+          print(f"Release tag {release_tag} matches pyproject.toml and points to origin/main.")
+          PY
+
+      - name: Ensure version is not already published
+        run: |
+          set -euo pipefail
+          version="$(uv run --python 3.13 --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/hf-job-control/$version/json")"
+          case "$status" in
+            200)
+              echo "hf-job-control@$version is already published on PyPI."
+              exit 1
+              ;;
+            404)
+              echo "Publishing hf-job-control@$version"
+              ;;
+            *)
+              echo "PyPI returned unexpected HTTP status $status."
+              exit 1
+              ;;
+          esac
+
+      - name: Validate package
+        run: |
+          set -euo pipefail
+          uv sync --python 3.13 --all-groups
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run mypy
+          uv run pytest --cov --cov-report=term-missing
+          uv run pip-audit
+          uvx slophammer-py@0.4.0 dry .
+          uvx slophammer-py@0.4.0 check .
+          uv run python scripts/check-mutation.py --min-kill-rate 70
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Validate documentation
+        run: npx -y @simpledoc/simpledoc check
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Check distributions
+        run: |
+          set -euo pipefail
+          uvx twine check dist/*
+
+          uv run --python 3.13 --no-project python - <<'PY'
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          wheel = next(Path("dist").glob("*.whl"))
+          sdist = next(Path("dist").glob("*.tar.gz"))
+          required = {
+              "SKILL.md",
+              "agents/openai.yaml",
+              "assets/launch-spec.example.json",
+              "references/operations-runbook.md",
+              "references/operator-workflows.md",
+              "references/protocol-and-storage.md",
+              "references/verification-checklists.md",
+              "references/worker-integration.md",
+              "references/schemas/applied-control-v1.schema.json",
+              "references/schemas/checkpoint-manifest-v1.schema.json",
+              "references/schemas/control-v1.schema.json",
+              "references/schemas/launch-spec-v1.schema.json",
+              "references/schemas/run-status-v1.schema.json",
+          }
+
+          with zipfile.ZipFile(wheel) as archive:
+              wheel_names = set(archive.namelist())
+          wheel_prefix = "hf_job_control/skills/hf-job-control/"
+          missing_wheel = sorted(
+              name for name in required if f"{wheel_prefix}{name}" not in wheel_names
+          )
+          if missing_wheel:
+              raise SystemExit(f"wheel is missing bundled skill files: {missing_wheel}")
+
+          with tarfile.open(sdist) as archive:
+              sdist_names = set(archive.getnames())
+          missing_sdist = sorted(
+              name
+              for name in required
+              if not any(
+                  path.endswith(f"/skills/hf-job-control/{name}") for path in sdist_names
+              )
+          )
+          if missing_sdist:
+              raise SystemExit(f"sdist is missing bundled skill files: {missing_sdist}")
+
+          print("Wheel and sdist contain the complete bundled agent skill.")
+          PY
+
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          uv run --python 3.13 --no-project --with "$wheel" python - <<'PY'
+          from importlib.resources import files
+          import hf_job_control
+
+          skill = files("hf_job_control").joinpath("skills", "hf-job-control", "SKILL.md")
+          if not skill.is_file():
+              raise SystemExit("installed wheel does not expose the bundled SKILL.md")
+          if "HF Job Control" not in skill.read_text(encoding="utf-8"):
+              raise SystemExit("installed bundled SKILL.md has unexpected contents")
+          print(f"Installed {hf_job_control.__name__} wheel exposes {skill}")
+          PY
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always

@@ -10,13 +10,19 @@ observed status and immutable receipts.
 
 ## Installation
 
-HF Job Control requires Python 3.11 or newer. Install a released tag with `uv`:
+HF Job Control requires Python 3.11 or newer. Install the CLI from PyPI:
 
 ```bash
-uv tool install "hf-job-control @ git+https://github.com/osolmaz/hf-job-control@<tag>"
+uv tool install hf-job-control
 ```
 
-A submitted job should pin the same tag and verify the built wheel's SHA-256.
+A submitted job should pin an exact package version and verify the built wheel's
+SHA-256. A Git commit remains available before the first release or when testing
+an unreleased change:
+
+```bash
+uv tool install "hf-job-control @ git+https://github.com/osolmaz/hf-job-control@<commit>"
+```
 
 ## Agent skill
 

@@ -9,9 +9,12 @@ description = "Cooperative pause, stop, and resume control for detached Hugging 
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "Onur Solmaz" }]
+authors = [{ name = "Onur Solmaz", email = "onur@solmaz.io" }]
 dependencies = ["huggingface-hub>=1.2,<2"]
+keywords = ["hugging-face", "jobs", "checkpoint", "resume", "cli"]
 classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -20,6 +23,11 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Typing :: Typed",
 ]
+
+[project.urls]
+Documentation = "https://github.com/osolmaz/hf-job-control#readme"
+Issues = "https://github.com/osolmaz/hf-job-control/issues"
+Repository = "https://github.com/osolmaz/hf-job-control"
 
 [project.scripts]
 hf-job-control = "hf_job_control.cli:main"
@@ -38,6 +46,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hf_job_control"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills/hf-job-control" = "hf_job_control/skills/hf-job-control"
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
