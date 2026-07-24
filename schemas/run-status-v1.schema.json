@@ -12,6 +12,7 @@
     "schema_version": {"const": 1},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "attempt_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "job_id": {"type": "string", "minLength": 1, "maxLength": 200},
     "state": {"enum": ["created", "running", "pausing", "paused", "stopping", "completed", "aborting", "aborted", "failed"]},
     "updated_at": {"type": "string", "format": "date-time"},
     "last_applied_generation": {"type": "integer", "minimum": 0},

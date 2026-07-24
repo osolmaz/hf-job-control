@@ -79,7 +79,7 @@ Hub reads, checkpoint uploads, status writes, and receipts as a real worker:
 hf-job-control canary "$RUN_ID" \
   --status-repo "$HF_JOB_STATUS_REPO" \
   --artifact-bucket "$HF_JOB_ARTIFACT_BUCKET" \
-  --package-ref "hf-job-control @ git+https://github.com/osolmaz/hf-job-control@<tag>"
+  --package-ref "git+https://github.com/osolmaz/hf-job-control.git@<tag>"
 ```
 
 Use the normal `pause`, `resume`, `launch`, and `stop` commands against the
@@ -124,7 +124,8 @@ for step in training_steps:
 
 The adapter writes and restores the application's checkpoint payload. The
 controller verifies the bundle and Hub revisions, tracks command generations,
-and writes both receipts and observed state.
+and writes both receipts and observed state. On Hugging Face Jobs, it also
+copies the built-in `JOB_ID` into those records.
 
 ## Resume guarantees
 

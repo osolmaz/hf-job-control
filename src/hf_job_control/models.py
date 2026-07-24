@@ -122,6 +122,14 @@ def validate_attempt_id(value: str) -> str:
     return value
 
 
+def validate_job_id(value: str | None) -> str | None:
+    """Validate an optional platform-assigned physical Job ID."""
+
+    if value is not None and (not value.strip() or len(value) > 200):
+        raise ValueError("job_id must be non-empty and at most 200 characters")
+    return value
+
+
 def validate_repo_id(value: str, field_name: str = "repo_id") -> str:
     """Validate a Hub namespace/name identifier."""
 
@@ -454,6 +462,7 @@ class AppliedControlReceipt:
     observed_at: datetime
     applied_at: datetime
     outcome: str
+    job_id: str | None = None
     boundary: Boundary | None = None
     checkpoint: ArtifactRef | None = None
     schema_version: int = SCHEMA_VERSION
@@ -463,6 +472,7 @@ class AppliedControlReceipt:
             raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
+        validate_job_id(self.job_id)
         validate_repo_id(self.control_repo, "control_repo")
         if not re.fullmatch(r"[0-9a-f]{40}", self.control_revision):
             raise ValueError("control_revision must be a 40-character Git commit")
@@ -492,6 +502,8 @@ class AppliedControlReceipt:
             "run_id": self.run_id,
             "schema_version": self.schema_version,
         }
+        if self.job_id is not None:
+            result["job_id"] = self.job_id
         if self.boundary is not None:
             result["boundary"] = self.boundary.to_dict()
         if self.checkpoint is not None:
@@ -509,6 +521,7 @@ class RunStatus:
     updated_at: datetime
     last_applied_generation: int
     last_action: Action
+    job_id: str | None = None
     boundary: Boundary | None = None
     checkpoint: ArtifactRef | None = None
     metrics: JsonObject = field(default_factory=dict)
@@ -520,6 +533,7 @@ class RunStatus:
             raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
+        validate_job_id(self.job_id)
         if self.updated_at.tzinfo is None:
             raise ValueError("updated_at must be timezone-aware")
         if self.last_applied_generation < 0:
@@ -537,6 +551,8 @@ class RunStatus:
             "state": self.state.value,
             "updated_at": format_datetime(self.updated_at),
         }
+        if self.job_id is not None:
+            result["job_id"] = self.job_id
         if self.boundary is not None:
             result["boundary"] = self.boundary.to_dict()
         if self.checkpoint is not None:
@@ -558,6 +574,7 @@ class RunStatus:
             "updated_at",
             "last_applied_generation",
             "last_action",
+            "job_id",
             "boundary",
             "checkpoint",
             "metrics",
@@ -585,6 +602,7 @@ class RunStatus:
                 data["last_applied_generation"], "last_applied_generation"
             ),
             last_action=Action(_require_string(data["last_action"], "last_action")),
+            job_id=_optional_string(data, "job_id"),
             boundary=None if boundary is None else Boundary.from_dict(boundary),
             checkpoint=None if checkpoint is None else ArtifactRef.from_dict(checkpoint),
             metrics=(

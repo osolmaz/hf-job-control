@@ -13,6 +13,7 @@
     "schema_version": {"const": 1},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "attempt_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "job_id": {"type": "string", "minLength": 1, "maxLength": 200},
     "control_repo": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"},
     "control_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "control_path": {"type": "string", "pattern": "^controls/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$"},

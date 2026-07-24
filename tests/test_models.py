@@ -110,6 +110,7 @@ def test_boundary_and_status_round_trip() -> None:
         updated_at=datetime.now(UTC),
         last_applied_generation=2,
         last_action=Action.RUN,
+        job_id="job-123",
         boundary=boundary,
         checkpoint=artifact(),
         message="healthy",

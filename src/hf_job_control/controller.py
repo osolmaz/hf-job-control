@@ -27,6 +27,7 @@ from hf_job_control.models import (
     StartResult,
     utc_now,
     validate_attempt_id,
+    validate_job_id,
     validate_run_id,
 )
 from hf_job_control.stores import ArtifactStore, ControlStore, StatusStore
@@ -38,12 +39,14 @@ class ControllerConfig:
 
     run_id: str
     attempt_id: str
+    job_id: str | None = None
     control_attempts: int = 3
     retry_delay_seconds: float = 2.0
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
+        validate_job_id(self.job_id)
         if self.control_attempts < 1:
             raise ValueError("control_attempts must be >= 1")
         if self.retry_delay_seconds < 0:
@@ -57,7 +60,11 @@ class ControllerConfig:
         attempt_id = os.environ.get("ATTEMPT_ID")
         if not run_id or not attempt_id:
             raise ValueError("RUN_ID and ATTEMPT_ID are required")
-        return cls(run_id=run_id, attempt_id=attempt_id)
+        return cls(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            job_id=os.environ.get("JOB_ID"),
+        )
 
 
 class Controller:
@@ -261,6 +268,7 @@ class Controller:
         receipt = AppliedControlReceipt(
             run_id=self.config.run_id,
             attempt_id=self.config.attempt_id,
+            job_id=self.config.job_id,
             control_repo=snapshot.repo_id,
             control_revision=snapshot.revision,
             control_path=snapshot.path,
@@ -281,6 +289,7 @@ class Controller:
         status = RunStatus(
             run_id=self.config.run_id,
             attempt_id=self.config.attempt_id,
+            job_id=self.config.job_id,
             state=state,
             updated_at=self._clock(),
             last_applied_generation=self._generation,

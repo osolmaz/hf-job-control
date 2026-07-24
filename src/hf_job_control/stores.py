@@ -204,7 +204,7 @@ class HubControlStore:
                     operations=[CommitOperationAdd(path_in_repo=path, path_or_fileobj=raw)],
                     commit_message=f"launch({run_id}): register immutable specification",
                 )
-            except RuntimeError:
+            except (OSError, RuntimeError):
                 if attempt == 2:
                     raise
                 continue
@@ -358,7 +358,7 @@ class HubStatusStore:
                     operations=[CommitOperationAdd(path_in_repo=path, path_or_fileobj=raw)],
                     commit_message=message,
                 )
-            except RuntimeError:
+            except (OSError, RuntimeError):
                 if attempt == 2:
                     raise
                 continue

@@ -56,6 +56,7 @@ def controller(
         ControllerConfig(
             run_id="run",
             attempt_id=attempt_id,
+            job_id=f"job-{attempt_id}",
             control_attempts=1,
             retry_delay_seconds=0,
         ),
@@ -127,6 +128,12 @@ def test_pause_resume_and_stop_preserve_state(tmp_path: Path) -> None:
         (2, Action.PAUSE),
         (3, Action.RUN),
         (4, Action.STOP),
+    ]
+    assert [item.job_id for item in statuses.receipts] == [
+        "job-attempt-1",
+        "job-attempt-1",
+        "job-attempt-2",
+        "job-attempt-2",
     ]
 
 
@@ -310,10 +317,12 @@ def test_controller_config_rejects_invalid_retry_settings() -> None:
 def test_controller_config_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RUN_ID", "run")
     monkeypatch.setenv("ATTEMPT_ID", "attempt-1")
+    monkeypatch.setenv("JOB_ID", "job-123")
 
     assert ControllerConfig.from_environment() == ControllerConfig(
         run_id="run",
         attempt_id="attempt-1",
+        job_id="job-123",
     )
 
 

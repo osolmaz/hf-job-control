@@ -333,7 +333,7 @@ def dispatch(args: argparse.Namespace) -> JsonObject:
 def main(argv: list[str] | None = None) -> int:
     try:
         result = dispatch(parse_args(argv))
-    except (OSError, RuntimeError, TimeoutError, ValueError) as error:
+    except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))
