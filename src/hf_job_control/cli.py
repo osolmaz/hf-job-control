@@ -18,9 +18,11 @@ from hf_job_control.launch import HubJobLauncher, LaunchedJob
 from hf_job_control.models import (
     Action,
     ArtifactRef,
+    CheckpointManifest,
     ControlDocument,
     JsonObject,
     LaunchSpec,
+    ResumeMode,
     RunState,
     stable_json_bytes,
 )
@@ -131,8 +133,11 @@ def command_resume(args: argparse.Namespace) -> JsonObject:
         raise ValueError(f"run must be paused before resume; found {status.state.value}")
     if status.checkpoint is None:
         raise ValueError("paused run has no checkpoint")
-    _verify_checkpoint(args, status.checkpoint)
-    return _publish(args, action=Action.RUN, resume_from=status.checkpoint)
+    manifest = _verify_checkpoint(args, status.checkpoint)
+    if manifest.adapter.resume_mode is ResumeMode.UNSUPPORTED:
+        raise ValueError("checkpoint adapter does not support resume")
+    resume_from = None if manifest.adapter.resume_mode is ResumeMode.RESTART else status.checkpoint
+    return _publish(args, action=Action.RUN, resume_from=resume_from)
 
 
 def _launch_result(job: LaunchedJob) -> JsonObject:
@@ -192,7 +197,10 @@ def command_canary(args: argparse.Namespace) -> JsonObject:
     return _launch_result(job)
 
 
-def _verify_checkpoint(args: argparse.Namespace, checkpoint: ArtifactRef) -> JsonObject:
+def _verify_checkpoint(
+    args: argparse.Namespace,
+    checkpoint: ArtifactRef,
+) -> CheckpointManifest:
     store = HubBucketArtifactStore(_artifact_bucket(args))
     with tempfile.TemporaryDirectory(prefix="hf-job-control-verify-") as temp_dir:
         destination = Path(temp_dir) / "checkpoint.hfjob"
@@ -200,7 +208,7 @@ def _verify_checkpoint(args: argparse.Namespace, checkpoint: ArtifactRef) -> Jso
         manifest = read_manifest(destination)
     if manifest.run_id != args.run_id:
         raise ValueError("checkpoint manifest run_id does not match requested run")
-    return manifest.to_dict()
+    return manifest
 
 
 def command_verify(args: argparse.Namespace) -> JsonObject:
@@ -210,7 +218,7 @@ def command_verify(args: argparse.Namespace) -> JsonObject:
     manifest = _verify_checkpoint(args, status.checkpoint)
     return {
         "checkpoint": status.checkpoint.to_dict(),
-        "manifest": manifest,
+        "manifest": manifest.to_dict(),
         "verified": True,
     }
 

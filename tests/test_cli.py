@@ -13,9 +13,11 @@ from hf_job_control.checkpoint import create_bundle
 from hf_job_control.launch import LaunchedJob
 from hf_job_control.models import (
     Action,
+    AdapterSpec,
     Boundary,
     ControlDocument,
     LaunchSpec,
+    ResumeMode,
     RunState,
     RunStatus,
     utc_now,
@@ -122,6 +124,74 @@ def test_cli_resume_and_verify(
     )
     verified = cli.dispatch(verify_args)
     assert verified["verified"] is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "resume_allowed"),
+    [
+        (ResumeMode.RESTART, True),
+        (ResumeMode.UNSUPPORTED, False),
+    ],
+)
+def test_cli_resume_honors_adapter_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ResumeMode,
+    resume_allowed: bool,
+) -> None:
+    class ModeAdapter(CounterAdapter):
+        @property
+        def spec(self) -> AdapterSpec:
+            return AdapterSpec(name="counter", version=1, resume_mode=mode)
+
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    artifacts = LocalArtifactStore(tmp_path / "artifacts")
+    install_stores(monkeypatch, controls, statuses, artifacts)
+    controls.publish(
+        ControlDocument(run_id="run", generation=1, action=Action.PAUSE),
+        expected_generation=0,
+    )
+    bundle = tmp_path / "checkpoint.hfjob"
+    create_bundle(
+        destination=bundle,
+        run_id="run",
+        attempt_id="attempt-1",
+        boundary=Boundary(name="counter", sequence=5),
+        adapter=ModeAdapter(value=5),
+    )
+    checkpoint = artifacts.put_checkpoint("run", bundle)
+    statuses.publish_status(
+        RunStatus(
+            run_id="run",
+            attempt_id="attempt-1",
+            state=RunState.PAUSED,
+            updated_at=utc_now(),
+            last_applied_generation=1,
+            last_action=Action.PAUSE,
+            checkpoint=checkpoint,
+        )
+    )
+    args = cli.parse_args(
+        [
+            "resume",
+            "--control-repo",
+            "owner/control",
+            "--status-repo",
+            "owner/status",
+            "--artifact-bucket",
+            "local/artifacts",
+            "run",
+        ]
+    )
+
+    if not resume_allowed:
+        with pytest.raises(ValueError, match="does not support resume"):
+            cli.dispatch(args)
+        return
+
+    cli.dispatch(args)
+    assert controls.fetch("run").control.resume_from is None
 
 
 def test_cli_watch_returns_terminal_status(

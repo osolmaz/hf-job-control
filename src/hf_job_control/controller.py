@@ -21,6 +21,7 @@ from hf_job_control.models import (
     ControlSnapshot,
     Decision,
     JsonObject,
+    ResumeMode,
     RunState,
     RunStatus,
     StartResult,
@@ -93,6 +94,11 @@ class Controller:
 
         snapshot = self._fetch_control()
         control = snapshot.control
+        if control.generation <= self._generation:
+            raise ControlError(
+                "start control generation must be newer than observed status "
+                f"({control.generation} <= {self._generation})"
+            )
         if control.action is not Action.RUN:
             raise ControlError(
                 f"cannot start while desired action is {control.action.value}; publish run first"
@@ -188,14 +194,27 @@ class Controller:
                     target_state=RunState.PAUSED,
                 )
             return self._decision(control.action, control.generation)
-        decision = self._decision(control.action, control.generation)
+        rejected_pause = (
+            control.action is Action.PAUSE and adapter.spec.resume_mode is ResumeMode.UNSUPPORTED
+        )
+        decision = self._decision(
+            control.action,
+            control.generation,
+            pause_supported=not rejected_pause,
+        )
         self._apply_snapshot(
             snapshot,
             boundary=boundary,
             checkpoint=checkpoint,
-            outcome="accepted",
+            outcome="rejected-unsupported" if rejected_pause else "accepted",
         )
-        self._publish_status(self._transition_state(control.action))
+        if rejected_pause:
+            self._publish_status(
+                RunState.ABORTING,
+                message=f"adapter {adapter.spec.name} does not support pause or resume",
+            )
+        else:
+            self._publish_status(self._transition_state(control.action))
         return decision
 
     def finish(self, decision: Decision, *, message: str | None = None) -> RunStatus:
@@ -275,10 +294,17 @@ class Controller:
         return status
 
     @staticmethod
-    def _decision(action: Action, generation: int) -> Decision:
+    def _decision(
+        action: Action,
+        generation: int,
+        *,
+        pause_supported: bool = True,
+    ) -> Decision:
         if action is Action.RUN:
             return Decision(action, generation, False, 0, RunState.RUNNING)
         if action is Action.PAUSE:
+            if not pause_supported:
+                return Decision(action, generation, True, 1, RunState.FAILED)
             return Decision(action, generation, True, 0, RunState.PAUSED)
         if action is Action.STOP:
             return Decision(action, generation, True, 0, RunState.COMPLETED)

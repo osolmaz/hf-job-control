@@ -85,6 +85,11 @@ def test_control_checks_expected_run_id() -> None:
         ControlDocument.from_dict(value, expected_run_id="run-b")
 
 
+def test_stable_json_rejects_nonfinite_numbers() -> None:
+    with pytest.raises(ValueError, match="JSON compliant"):
+        stable_json_bytes({"loss": float("nan")})
+
+
 def test_datetime_round_trip() -> None:
     value = datetime(2026, 7, 24, 5, 25, tzinfo=UTC)
 

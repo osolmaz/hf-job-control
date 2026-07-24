@@ -88,7 +88,9 @@ def parse_datetime(value: object, field_name: str) -> datetime:
 def stable_json_bytes(value: JsonObject) -> bytes:
     """Serialize an object in the canonical repository format."""
 
-    return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
+    return (
+        json.dumps(value, allow_nan=False, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode()
 
 
 def parse_json_object(raw: bytes) -> JsonObject:

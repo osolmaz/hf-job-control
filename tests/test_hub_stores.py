@@ -15,6 +15,7 @@ from hf_job_control.models import (
     AppliedControlReceipt,
     Boundary,
     ControlDocument,
+    LaunchSpec,
     RunState,
     RunStatus,
     stable_json_bytes,
@@ -83,6 +84,39 @@ def test_hub_control_fetch_and_publish(
 
     assert snapshot.control == next_control
     assert api.created[0]["parent_commit"] == "1" * 40
+
+
+def test_hub_control_registers_immutable_launch_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeApi()
+    store = HubControlStore("owner/control", api=cast(HfApi, api))
+    spec = LaunchSpec(
+        image="python:3.13",
+        command=("python", "worker.py"),
+        flavor="cpu-basic",
+        timeout="10m",
+    )
+
+    published = store.register_launch_spec("run", spec)
+
+    assert published.path == "launch-specs/run.json"
+    api.existing = True
+    different = tmp_path / "launch.json"
+    different.write_bytes(
+        stable_json_bytes(
+            LaunchSpec(
+                image="python:3.13",
+                command=("python", "worker.py"),
+                flavor="cpu-basic",
+                timeout="20m",
+            ).to_dict()
+        )
+    )
+    monkeypatch.setattr(stores_module, "hf_hub_download", lambda **_kwargs: str(different))
+    with pytest.raises(RuntimeError, match="immutable launch specification differs"):
+        store.register_launch_spec("run", spec)
 
 
 def test_hub_control_create_and_missing(

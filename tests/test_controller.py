@@ -14,6 +14,8 @@ from hf_job_control.models import (
     ControlDocument,
     ControlSnapshot,
     JsonObject,
+    LaunchSpec,
+    PublishedDocument,
     ResumeMode,
     RunState,
 )
@@ -208,6 +210,29 @@ def test_repeated_run_generation_is_idempotent(tmp_path: Path) -> None:
     assert len(statuses.receipts) == 1
 
 
+def test_start_rejects_replayed_generation(tmp_path: Path) -> None:
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    artifacts = LocalArtifactStore(tmp_path)
+    publish(controls, "run", 1, Action.RUN)
+    first = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+    first.start(CounterAdapter())
+    replay = controller(
+        attempt_id="attempt-2",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+
+    with pytest.raises(RuntimeError, match="newer than observed status"):
+        replay.start(CounterAdapter())
+
+
 def test_start_rejects_non_run_control(tmp_path: Path) -> None:
     controls = MemoryControlStore()
     publish(controls, "run", 1, Action.PAUSE)
@@ -241,6 +266,13 @@ def test_control_failure_pauses_after_checkpoint(tmp_path: Path) -> None:
             expected_generation: int,
         ) -> ControlSnapshot:
             return self.wrapped.publish(control, expected_generation=expected_generation)
+
+        def register_launch_spec(
+            self,
+            run_id: str,
+            spec: LaunchSpec,
+        ) -> PublishedDocument:
+            return self.wrapped.register_launch_spec(run_id, spec)
 
     controls = MemoryControlStore()
     publish(controls, "run", 1, Action.RUN)
@@ -318,6 +350,41 @@ def test_start_rejects_resume_for_restart_adapter(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="does not support checkpoint resume"):
         restarted.start(RestartAdapter())
+
+
+def test_unsupported_adapter_rejects_pause(tmp_path: Path) -> None:
+    class UnsupportedAdapter(CounterAdapter):
+        @property
+        def spec(self) -> AdapterSpec:
+            return AdapterSpec(name="counter", version=1, resume_mode=ResumeMode.UNSUPPORTED)
+
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    publish(controls, "run", 1, Action.RUN)
+    worker = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=LocalArtifactStore(tmp_path),
+    )
+    adapter = UnsupportedAdapter()
+    worker.start(adapter)
+    publish(controls, "run", 2, Action.PAUSE)
+
+    decision = worker.boundary(
+        boundary=Boundary(name="counter", sequence=1),
+        adapter=adapter,
+    )
+
+    assert decision.action is Action.PAUSE
+    assert decision.exit_code == 1
+    assert decision.target_state is RunState.FAILED
+    assert statuses.receipts[-1].outcome == "rejected-unsupported"
+    status = statuses.fetch_status("run")
+    assert status is not None
+    assert status.state is RunState.ABORTING
+    assert "does not support" in (status.message or "")
+    assert worker.finish(decision).state is RunState.FAILED
 
 
 def test_boundary_requires_start(tmp_path: Path) -> None:

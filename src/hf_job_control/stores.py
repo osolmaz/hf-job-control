@@ -16,6 +16,7 @@ from hf_job_control.models import (
     ArtifactRef,
     ControlDocument,
     ControlSnapshot,
+    LaunchSpec,
     PublishedDocument,
     RunStatus,
     parse_json_object,
@@ -37,6 +38,9 @@ class ControlStore(Protocol):
 
     def publish(self, control: ControlDocument, *, expected_generation: int) -> ControlSnapshot:
         """Publish the next control generation with optimistic concurrency."""
+
+    def register_launch_spec(self, run_id: str, spec: LaunchSpec) -> PublishedDocument:
+        """Register or verify the immutable launch specification."""
 
 
 class StatusStore(Protocol):
@@ -80,6 +84,12 @@ def control_path(run_id: str) -> str:
     """Return the control path for a logical run."""
 
     return f"controls/{validate_run_id(run_id)}.json"
+
+
+def launch_spec_path(run_id: str) -> str:
+    """Return the immutable launch specification path for a logical run."""
+
+    return f"launch-specs/{validate_run_id(run_id)}.json"
 
 
 def status_path(prefix: str, run_id: str) -> str:
@@ -150,6 +160,61 @@ class HubControlStore:
             observed_at=utc_now(),
             control=control,
         )
+
+    def register_launch_spec(self, run_id: str, spec: LaunchSpec) -> PublishedDocument:
+        path = launch_spec_path(run_id)
+        raw = stable_json_bytes(spec.to_dict())
+        for attempt in range(3):
+            head = str(
+                self.api.repo_info(
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                ).sha
+            )
+            if self.api.file_exists(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                filename=path,
+                revision=head,
+            ):
+                existing = Path(
+                    hf_hub_download(
+                        repo_id=self.repo_id,
+                        repo_type="dataset",
+                        filename=path,
+                        revision=head,
+                        token=self.token,
+                    )
+                ).read_bytes()
+                if existing != raw:
+                    raise RuntimeError(f"immutable launch specification differs for run {run_id}")
+                return PublishedDocument(
+                    repo_id=self.repo_id,
+                    revision=head,
+                    path=path,
+                    sha256=sha256_bytes(raw),
+                )
+            try:
+                commit = self.api.create_commit(
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                    parent_commit=head,
+                    operations=[CommitOperationAdd(path_in_repo=path, path_or_fileobj=raw)],
+                    commit_message=f"launch({run_id}): register immutable specification",
+                )
+            except RuntimeError:
+                if attempt == 2:
+                    raise
+                continue
+            return PublishedDocument(
+                repo_id=self.repo_id,
+                revision=str(commit.oid),
+                path=path,
+                sha256=sha256_bytes(raw),
+            )
+        raise AssertionError("unreachable")
 
     def _fetch_optional(self, run_id: str) -> tuple[str, ControlSnapshot | None]:
         path = control_path(run_id)
@@ -386,6 +451,7 @@ class MemoryControlStore:
 
     def __init__(self) -> None:
         self._controls: dict[str, ControlDocument] = {}
+        self._launch_specs: dict[str, LaunchSpec] = {}
         self._counter = 0
         self._lock = threading.Lock()
 
@@ -407,6 +473,22 @@ class MemoryControlStore:
             self._controls[control.run_id] = control
             self._counter += 1
             return self._snapshot(control)
+
+    def register_launch_spec(self, run_id: str, spec: LaunchSpec) -> PublishedDocument:
+        validate_run_id(run_id)
+        with self._lock:
+            existing = self._launch_specs.get(run_id)
+            if existing is not None and existing != spec:
+                raise RuntimeError(f"immutable launch specification differs for run {run_id}")
+            self._launch_specs[run_id] = spec
+            self._counter += 1
+            raw = stable_json_bytes(spec.to_dict())
+            return PublishedDocument(
+                repo_id="memory/control",
+                revision=f"{self._counter:040x}",
+                path=launch_spec_path(run_id),
+                sha256=sha256_bytes(raw),
+            )
 
     def _snapshot(self, control: ControlDocument) -> ControlSnapshot:
         raw = stable_json_bytes(control.to_dict())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 
@@ -66,6 +67,20 @@ def test_launch_adds_identity_and_resolves_secrets() -> None:
     }
     assert api.kwargs["secrets"] == {"HF_TOKEN": "secret"}
     assert api.kwargs["timeout"] == "10m"
+
+
+def test_launch_rejects_changed_immutable_specification() -> None:
+    store = run_store()
+    api = FakeApi()
+    launcher = HubJobLauncher(store, api=cast(HfApi, api))
+    launcher.launch("run", spec(), attempt_id="attempt-1")
+
+    with pytest.raises(RuntimeError, match="immutable launch specification differs"):
+        launcher.launch(
+            "run",
+            replace(spec(), timeout="20m"),
+            attempt_id="attempt-2",
+        )
 
 
 def test_launch_rejects_non_run_control() -> None:

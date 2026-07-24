@@ -40,6 +40,9 @@ Launch one physical attempt from a checked-in launch specification:
 hf-job-control launch "$RUN_ID" launch.json
 ```
 
+The first launch stores this specification under the logical run. Later
+attempts must match it byte for byte after canonical JSON serialization.
+
 A pause takes effect after the next safe checkpoint:
 
 ```bash
@@ -47,8 +50,10 @@ hf-job-control pause "$RUN_ID" --reason "Release the worker"
 hf-job-control watch "$RUN_ID"
 ```
 
-Resume publishes `run` with the verified paused checkpoint. Launching again
-creates a new physical job under the same logical run ID:
+Resume verifies the paused checkpoint and publishes the next `run` generation.
+Exact and boundary adapters carry the checkpoint reference forward. Restart
+adapters begin again from their immutable inputs. Launching creates a new
+physical job under the same logical run ID:
 
 ```bash
 hf-job-control resume "$RUN_ID" --reason "Continue from the checkpoint"
@@ -125,8 +130,9 @@ and writes both receipts and observed state.
 
 Adapters declare one resume mode. `exact` restores every state item needed to
 match uninterrupted execution. `boundary` restarts from the last committed
-unit. `restart` repeats the job from immutable inputs, and `unsupported`
-rejects resume requests.
+unit. `restart` repeats the job from immutable inputs. `unsupported` rejects a
+pause at the safe boundary and exits failed rather than promise an unusable
+checkpoint.
 
 For PyTorch training, an exact adapter normally includes model parameters,
 optimizer and scheduler state, mixed-precision state, random-number generator
