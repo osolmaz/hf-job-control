@@ -78,7 +78,9 @@ source_paths = [
   "src/hf_job_control/controller.py",
 ]
 also_copy = [
+  "package.json",
   "schemas/",
+  "skills/",
   "src/hf_job_control/__init__.py",
   "src/hf_job_control/canary.py",
   "src/hf_job_control/cli.py",

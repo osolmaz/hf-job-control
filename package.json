@@ -1,0 +1,22 @@
+{
+  "name": "hf-job-control-agent-skill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent skill bundled with HF Job Control",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/osolmaz/hf-job-control.git"
+  },
+  "keywords": [
+    "pi-package",
+    "agent-skill",
+    "hugging-face",
+    "job-control"
+  ],
+  "pi": {
+    "skills": [
+      "./skills/hf-job-control"
+    ]
+  }
+}

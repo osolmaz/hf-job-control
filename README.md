@@ -18,6 +18,23 @@ uv tool install "hf-job-control @ git+https://github.com/osolmaz/hf-job-control@
 
 A submitted job should pin the same tag and verify the built wheel's SHA-256.
 
+## Agent skill
+
+The repository includes a comprehensive Agent Skills package under
+[`skills/hf-job-control`](skills/hf-job-control/SKILL.md). It covers operator
+workflows, worker integration, protocol records, incident recovery, and launch
+or completion audits.
+
+Pi can load only the public HF Job Control skill from a pinned Git revision:
+
+```bash
+pi install git:github.com/osolmaz/hf-job-control@<tag-or-commit>
+```
+
+The `package.json` manifest excludes the repository's internal documentation
+helper. Other Agent Skills-compatible tools can load or copy the
+`skills/hf-job-control` directory directly.
+
 ## Operator workflow
 
 Set the private Hub resources used by the run:
@@ -132,7 +149,7 @@ copies the built-in `JOB_ID` into those records.
 Adapters declare one resume mode. `exact` restores every state item needed to
 match uninterrupted execution. `boundary` restarts from the last committed
 unit. `restart` repeats the job from immutable inputs. `unsupported` rejects a
-pause at the safe boundary and exits failed rather than promise an unusable
+pause at the safe boundary and exits failed because it cannot promise a usable
 checkpoint.
 
 For PyTorch training, an exact adapter normally includes model parameters,
