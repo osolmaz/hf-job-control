@@ -1,3 +1,9 @@
+---
+title: "HF Job Control implementation plan"
+author: "Onur Solmaz <2453968+osolmaz@users.noreply.github.com>"
+date: "2026-07-24"
+---
+
 # HF Job Control implementation plan
 
 ## Purpose
@@ -158,13 +164,12 @@ operator CLI will perform the following steps for `hf-job-control resume`:
 4. Confirm that its format and submitted-code identity match the registered
    launch specification.
 5. Publish a new `run` generation containing `resume_from`.
-6. Launch a new physical job from the immutable launch specification.
-7. Record the new job ID as another attempt of the same logical run.
+6. Return the exact control revision to the operator.
 
-Publishing desired state and launching compute cannot be one atomic Hub
-operation. If launch fails after the new `run` command is published, rerunning
-`resume` will detect that no attempt claimed the generation and safely retry the
-launch.
+The operator then uses `hf-job-control launch` with the immutable launch
+specification. Publishing desired state and launching compute cannot be one
+atomic Hub operation, so keeping these as separate commands makes a failed
+launch visible and safely retryable.
 
 At startup, the worker will verify `resume_from` before constructing mutable
 training state. The job adapter will restore the checkpoint and return resume
@@ -210,22 +215,25 @@ these identities disagree with the control document.
 
 ## Planned Python API
 
-The worker API should stay small. The expected shape is:
+The worker API stays small:
 
 ```python
-controller = Controller.from_environment(adapter=checkpoint_adapter)
+controller.start(checkpoint_adapter)
 
-checkpoint = checkpoint_adapter.save(boundary, state)
-status = controller.publish_boundary(boundary, metrics, checkpoint)
-decision = controller.poll_after_boundary(status)
-
-checkpoint_adapter.finalize(decision)
+decision = controller.boundary(
+    boundary=boundary,
+    adapter=checkpoint_adapter,
+    metrics=metrics,
+)
+if decision.should_exit:
+    finalize_outputs()
+    controller.finish(decision)
 ```
 
-The exact names may change during implementation. The important constraint is
-that `poll_after_boundary` requires proof of a published checkpoint and status.
-A caller should not be able to request a lifecycle decision before reaching a
-safe boundary.
+`boundary` asks the adapter to save its payload, uploads the verified bundle,
+publishes status, reads control, and writes the receipt. A caller cannot request
+a lifecycle decision without first providing a safe boundary and checkpoint
+adapter.
 
 Storage will sit behind narrow `ControlStore`, `ArtifactStore`, and
 `StatusStore` interfaces. The first implementations will use
@@ -244,8 +252,9 @@ hf-job-control pause RUN_ID
 hf-job-control stop RUN_ID
 hf-job-control abort RUN_ID
 hf-job-control resume RUN_ID
+hf-job-control launch RUN_ID launch.json
 hf-job-control verify RUN_ID
-hf-job-control canary
+hf-job-control canary RUN_ID --package-ref PACKAGE
 ```
 
 Mutating commands will show the current generation and require optimistic
@@ -260,8 +269,8 @@ without W&B.
 ## Package and repository layout
 
 The project will require Python 3.11 or newer. It will use `uv`, typed public
-interfaces, Ruff and Pyright, plus Pytest and Slophammer's Python checks. Releases will
-publish a signed or provenance-backed wheel from a GitHub Release.
+interfaces, Ruff, mypy, Pytest, and Slophammer's Python checks. Releases will
+publish a provenance-backed wheel from a GitHub Release.
 
 The proposed source layout is:
 
@@ -271,7 +280,8 @@ src/hf_job_control/
   controller.py
   models.py
   stores.py
-  receipts.py
+  checkpoint.py
+  metrics.py
   launch.py
   canary.py
 tests/
