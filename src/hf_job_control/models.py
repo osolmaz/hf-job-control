@@ -463,6 +463,7 @@ class AppliedControlReceipt:
     applied_at: datetime
     outcome: str
     job_id: str | None = None
+    evidence: JsonObject = field(default_factory=dict)
     boundary: Boundary | None = None
     checkpoint: ArtifactRef | None = None
     schema_version: int = SCHEMA_VERSION
@@ -504,6 +505,8 @@ class AppliedControlReceipt:
         }
         if self.job_id is not None:
             result["job_id"] = self.job_id
+        if self.evidence:
+            result["evidence"] = self.evidence
         if self.boundary is not None:
             result["boundary"] = self.boundary.to_dict()
         if self.checkpoint is not None:
@@ -650,6 +653,7 @@ class StartResult:
     generation: int
     checkpoint: ArtifactRef | None
     boundary: Boundary | None
+    resume_evidence: JsonObject
 
 
 @dataclass(frozen=True, slots=True)

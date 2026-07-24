@@ -111,6 +111,7 @@ class Controller:
                 f"cannot start while desired action is {control.action.value}; publish run first"
             )
         resumed = False
+        resume_evidence: JsonObject = {}
         boundary: Boundary | None = None
         if control.resume_from is not None:
             if adapter.spec.resume_mode.value in {"restart", "unsupported"}:
@@ -120,7 +121,7 @@ class Controller:
             with tempfile.TemporaryDirectory(prefix="hf-job-control-start-") as temp_dir:
                 bundle = Path(temp_dir) / "checkpoint.hfjob"
                 self.artifact_store.get_checkpoint(control.resume_from, bundle)
-                manifest, _evidence = restore_bundle(
+                manifest, resume_evidence = restore_bundle(
                     bundle=bundle,
                     expected_run_id=self.config.run_id,
                     adapter=adapter,
@@ -134,6 +135,7 @@ class Controller:
             boundary=boundary,
             checkpoint=self._checkpoint,
             outcome="resumed" if resumed else "started",
+            evidence=resume_evidence,
         )
         self._publish_status(RunState.RUNNING)
         self._started = True
@@ -142,6 +144,7 @@ class Controller:
             generation=control.generation,
             checkpoint=control.resume_from,
             boundary=boundary,
+            resume_evidence=resume_evidence,
         )
 
     def boundary(
@@ -263,6 +266,7 @@ class Controller:
         boundary: Boundary | None,
         checkpoint: ArtifactRef | None,
         outcome: str,
+        evidence: JsonObject | None = None,
     ) -> None:
         control = snapshot.control
         receipt = AppliedControlReceipt(
@@ -278,6 +282,7 @@ class Controller:
             observed_at=snapshot.observed_at,
             applied_at=self._clock(),
             outcome=outcome,
+            evidence={} if evidence is None else evidence,
             boundary=boundary,
             checkpoint=checkpoint,
         )

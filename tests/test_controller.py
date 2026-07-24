@@ -112,6 +112,8 @@ def test_pause_resume_and_stop_preserve_state(tmp_path: Path) -> None:
     assert second_adapter.value == 8
     assert start.boundary is not None
     assert start.boundary.sequence == 8
+    assert start.resume_evidence == {"restored_value": 8, "sequence": 8}
+    assert statuses.receipts[-1].evidence == start.resume_evidence
 
     publish(controls, "run", 4, Action.STOP)
     second_adapter.value += 1
