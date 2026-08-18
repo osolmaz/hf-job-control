@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
 
 from hf_job_control.models import (
     Action,
@@ -28,12 +29,23 @@ from hf_job_control.progress import (
 )
 
 ROOT = Path(__file__).parents[1]
+SCHEMAS = {
+    path.name: json.loads(path.read_text(encoding="utf-8"))
+    for path in (ROOT / "schemas").glob("*.json")
+}
+REGISTRY = Registry().with_resources(
+    (schema["$id"], Resource.from_contents(schema)) for schema in SCHEMAS.values()
+)
 
 
 def validate(schema_name: str, value: object) -> None:
-    schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
+    schema = SCHEMAS[schema_name]
     Draft202012Validator.check_schema(schema)
-    Draft202012Validator(schema, format_checker=FormatChecker()).validate(value)
+    Draft202012Validator(
+        schema,
+        format_checker=FormatChecker(),
+        registry=REGISTRY,
+    ).validate(value)
 
 
 def test_progress_schemas_match_models() -> None:

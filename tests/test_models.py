@@ -18,6 +18,12 @@ from hf_job_control.models import (
     parse_json_object,
     stable_json_bytes,
 )
+from hf_job_control.progress import (
+    ProgressInput,
+    ProgressSnapshot,
+    ProgressStatus,
+    ProgressTrack,
+)
 
 DIGEST = "a" * 64
 
@@ -117,6 +123,34 @@ def test_boundary_and_status_round_trip() -> None:
     )
 
     assert RunStatus.from_dict(status.to_dict()) == status
+
+
+def test_status_rejects_progress_for_another_attempt() -> None:
+    progress = ProgressSnapshot(
+        run_id="run",
+        attempt_id="attempt-2",
+        sequence=1,
+        updated_at=datetime.now(UTC),
+        input=ProgressInput(revision="a" * 40, contract_sha256="b" * 64),
+        state=ProgressStatus.RUNNING,
+        tracks=(
+            ProgressTrack(
+                key="items",
+                plan_id="plan-1",
+                status=ProgressStatus.RUNNING,
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="attempt_id must match"):
+        RunStatus(
+            run_id="run",
+            attempt_id="attempt-1",
+            state=RunState.RUNNING,
+            updated_at=datetime.now(UTC),
+            last_applied_generation=1,
+            last_action=Action.RUN,
+            progress=progress,
+        )
 
 
 def test_adapter_spec_rejects_unstable_name() -> None:

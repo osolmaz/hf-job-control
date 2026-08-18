@@ -161,6 +161,7 @@ class Controller:
 
         if not self._started:
             raise RuntimeError("start() must be called before boundary()")
+        self._validate_progress(progress)
         current_metrics = {} if metrics is None else metrics
         metric_error: str | None = None
         try:
@@ -311,6 +312,16 @@ class Controller:
         )
         self.status_store.publish_status(status)
         return status
+
+    def _validate_progress(self, progress: ProgressSnapshot | None) -> None:
+        if progress is None:
+            return
+        if progress.run_id != self.config.run_id:
+            raise ValueError("progress run_id must match controller run_id")
+        if progress.attempt_id != self.config.attempt_id:
+            raise ValueError("progress attempt_id must match controller attempt_id")
+        if progress.job_id is not None and progress.job_id != self.config.job_id:
+            raise ValueError("progress job_id must match controller job_id")
 
     @staticmethod
     def _decision(

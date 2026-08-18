@@ -245,6 +245,42 @@ def test_boundary_publishes_typed_progress(tmp_path: Path) -> None:
     assert status.progress == progress
 
 
+def test_boundary_rejects_progress_for_another_run(tmp_path: Path) -> None:
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    publish(controls, "run", 1, Action.RUN)
+    worker = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=LocalArtifactStore(tmp_path),
+    )
+    adapter = CounterAdapter()
+    worker.start(adapter)
+    progress = ProgressSnapshot(
+        run_id="other-run",
+        attempt_id="attempt-1",
+        sequence=1,
+        updated_at=datetime.now(UTC),
+        input=ProgressInput(revision="a" * 40, contract_sha256="b" * 64),
+        state=ProgressStatus.RUNNING,
+        tracks=(
+            ProgressTrack(
+                key="items",
+                plan_id="plan-1",
+                status=ProgressStatus.RUNNING,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="run_id must match"):
+        worker.boundary(
+            boundary=Boundary(name="counter", sequence=1),
+            adapter=adapter,
+            progress=progress,
+        )
+
+
 def test_repeated_run_generation_is_idempotent(tmp_path: Path) -> None:
     controls = MemoryControlStore()
     statuses = MemoryStatusStore()

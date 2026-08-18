@@ -7,6 +7,7 @@ const REPO_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const RFC3339 =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
+const PUBLICATION_LOCKS = new Map<string, AsyncLock>();
 
 export type ProgressStatus =
   | "pending"
@@ -117,11 +118,16 @@ export function progressSnapshotKey(
 export class ObjectProgressStore implements ProgressStore {
   readonly #objects: ProgressObjectStore;
   readonly #prefix: string;
+  readonly #publicationLock: AsyncLock;
 
   constructor(objects: ProgressObjectStore, prefix = "") {
     requireRepoId(objects.bucketId, "bucketId");
     this.#objects = objects;
     this.#prefix = normalizePrefix(prefix);
+    this.#publicationLock = sharedPublicationLock(
+      objects.bucketId,
+      this.#prefix,
+    );
   }
 
   async loadLatest(runId: string): Promise<StoredProgress | null> {
@@ -132,10 +138,17 @@ export class ObjectProgressStore implements ProgressStore {
     const pointer = parseProgressPointer(parseJson(raw));
     if (pointer.run_id !== runId)
       throw new Error("progress pointer run_id mismatch");
-    return {
-      snapshot: await this.loadReference(pointer.snapshot),
-      reference: pointer.snapshot,
-    };
+    const snapshot = await this.loadReference(pointer.snapshot);
+    if (snapshot.run_id !== pointer.run_id) {
+      throw new Error("progress pointer snapshot run_id mismatch");
+    }
+    if (snapshot.sequence !== pointer.sequence) {
+      throw new Error("progress pointer snapshot sequence mismatch");
+    }
+    if (snapshot.updated_at !== pointer.updated_at) {
+      throw new Error("progress pointer snapshot timestamp mismatch");
+    }
+    return { snapshot, reference: pointer.snapshot };
   }
 
   async loadReference(reference: ArtifactRef): Promise<ProgressSnapshot> {
@@ -150,7 +163,11 @@ export class ObjectProgressStore implements ProgressStore {
     return parseProgressSnapshot(parseJson(raw));
   }
 
-  async publish(snapshot: ProgressSnapshot): Promise<StoredProgress> {
+  publish(snapshot: ProgressSnapshot): Promise<StoredProgress> {
+    return this.#publicationLock.run(() => this.#publish(snapshot));
+  }
+
+  async #publish(snapshot: ProgressSnapshot): Promise<StoredProgress> {
     const validated = parseProgressSnapshot(snapshot);
     const latest = await this.loadLatest(validated.run_id);
     validatePublication(validated, latest);
@@ -245,13 +262,15 @@ export class ProgressReporter {
     if (sameInput) {
       for (const track of latest.snapshot.tracks)
         this.#tracks.set(track.key, track);
+      this.#state = latest.snapshot.state;
+      this.#dirty =
+        !TERMINAL_STATUSES.has(latest.snapshot.state) &&
+        (latest.snapshot.attempt_id !== options.attemptId ||
+          latest.snapshot.job_id !== options.jobId);
+    } else {
+      this.#state = "running";
+      this.#dirty = true;
     }
-    this.#dirty =
-      latest === null ||
-      !sameInput ||
-      latest.snapshot.attempt_id !== options.attemptId ||
-      latest.snapshot.job_id !== options.jobId ||
-      latest.snapshot.state !== "running";
     this.#lastFlushMs =
       latest === null ? null : Date.parse(latest.snapshot.updated_at);
   }
@@ -480,6 +499,28 @@ export function stableJsonBytes(value: unknown): Uint8Array {
     `${JSON.stringify(canonicalize(value), null, 2)}\n`,
     "utf8",
   );
+}
+
+class AsyncLock {
+  #tail: Promise<void> = Promise.resolve();
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#tail.then(operation, operation);
+    this.#tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
+function sharedPublicationLock(bucketId: string, prefix: string): AsyncLock {
+  const key = `${bucketId}\n${prefix}`;
+  const existing = PUBLICATION_LOCKS.get(key);
+  if (existing !== undefined) return existing;
+  const created = new AsyncLock();
+  PUBLICATION_LOCKS.set(key, created);
+  return created;
 }
 
 function parseProgressInput(value: unknown): ProgressInput {
