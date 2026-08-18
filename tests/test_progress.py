@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import io
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -12,12 +13,14 @@ from hf_job_control.progress import (
     HubBucketProgressStore,
     LocalProgressStore,
     MemoryProgressStore,
+    ProgressClaim,
     ProgressInput,
     ProgressPointer,
     ProgressReporter,
     ProgressSnapshot,
     ProgressStatus,
     ProgressTrack,
+    progress_claim_key,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -116,6 +119,14 @@ def test_reporter_rejects_regression_but_accepts_new_plan() -> None:
         reporter.update(track(4))
     with pytest.raises(ValueError, match="total cannot change"):
         reporter.update(track(5, total=11))
+    added = ProgressTrack(
+        key="later",
+        plan_id="plan-1",
+        status=ProgressStatus.PENDING,
+    )
+    with pytest.raises(ValueError, match="backwards"):
+        reporter.plan([added, track(4)])
+    assert [item.key for item in reporter.tracks] == ["items"]
 
     reporter.update(track(0, plan_id="plan-2", total=20))
     assert reporter.tracks == (track(0, plan_id="plan-2", total=20),)
@@ -294,6 +305,49 @@ def test_pointer_metadata_must_match_snapshot() -> None:
         store.load_latest("run")
 
 
+def test_orphan_sequence_claim_restores_missing_pointer() -> None:
+    store = MemoryProgressStore()
+    reporter = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    reporter.plan([track(1)])
+    stored = reporter.flush(force=True)
+    assert stored is not None
+    del store.pointers["run"]
+
+    assert store.load_latest("run") == stored
+    assert store.pointers["run"].snapshot == stored.reference
+
+
+def test_competing_sequence_claims_are_rejected() -> None:
+    store = MemoryProgressStore()
+    reporter = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    reporter.plan([track(1)])
+    stored = reporter.flush(force=True)
+    assert stored is not None
+    competing = ProgressClaim(
+        run_id="run",
+        attempt_id="attempt-2",
+        sequence=1,
+        created_at=NOW,
+        snapshot=stored.reference,
+    )
+    store.claims[progress_claim_key("", competing)] = stable_json_bytes(competing.to_dict())
+
+    with pytest.raises(RuntimeError, match="competing progress sequence claims"):
+        store.load_latest("run")
+
+
 def test_store_rejects_out_of_order_snapshot() -> None:
     store = MemoryProgressStore()
     snapshot = ProgressSnapshot(
@@ -315,6 +369,9 @@ class MemoryBucketFileSystem:
 
     def exists(self, path: str) -> bool:
         return path in self.files
+
+    def glob(self, path: str) -> list[str]:
+        return sorted(key for key in self.files if fnmatch.fnmatch(key, path))
 
     def open(self, path: str, mode: str) -> io.BytesIO:
         if mode == "rb":

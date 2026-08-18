@@ -6,8 +6,10 @@ import {
   ObjectProgressStore,
   ProgressReporter,
   parseProgressSnapshot,
+  progressClaimKey,
   progressPointerKey,
   stableJsonBytes,
+  type ProgressClaim,
   type ProgressInput,
   type ProgressObjectStore,
   type ProgressTrack,
@@ -40,6 +42,12 @@ class MemoryObjects implements ProgressObjectStore {
 
   async read(key: string): Promise<Uint8Array | null> {
     return this.files.get(key) ?? null;
+  }
+
+  async list(prefix: string): Promise<readonly string[]> {
+    return [...this.files.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .sort();
   }
 
   async write(key: string, content: Uint8Array): Promise<void> {
@@ -199,6 +207,18 @@ test("same plan rejects regression and a new plan resets counts", async () => {
     () => reporter.update({ ...track(5), total: 11 }),
     /total cannot change/u,
   );
+  assert.throws(
+    () =>
+      reporter.plan([
+        { key: "later", plan_id: "plan-1", status: "pending" },
+        track(4),
+      ]),
+    /cannot move backwards/u,
+  );
+  assert.deepEqual(
+    reporter.tracks.map((item) => item.key),
+    ["items"],
+  );
   reporter.update(track(0, "plan-2", 20));
   assert.deepEqual(reporter.tracks, [track(0, "plan-2", 20)]);
 });
@@ -228,6 +248,56 @@ test("pointer metadata must match its snapshot", async () => {
   );
 
   await assert.rejects(store.loadLatest("run"), /snapshot run_id mismatch/u);
+});
+
+test("orphan sequence claim restores a missing pointer", async () => {
+  const objects = new MemoryObjects();
+  const store = new ObjectProgressStore(objects);
+  const reporter = await ProgressReporter.create({
+    runId: "run",
+    attemptId: "attempt-1",
+    input,
+    store,
+    clock: () => new Date("2026-08-18T12:00:00Z"),
+  });
+  reporter.plan([track(1)]);
+  const stored = await reporter.flush({ force: true });
+  assert.ok(stored);
+  objects.files.delete(progressPointerKey("", "run"));
+
+  assert.deepEqual(await store.loadLatest("run"), stored);
+});
+
+test("competing sequence claims are rejected", async () => {
+  const objects = new MemoryObjects();
+  const store = new ObjectProgressStore(objects);
+  const reporter = await ProgressReporter.create({
+    runId: "run",
+    attemptId: "attempt-1",
+    input,
+    store,
+    clock: () => new Date("2026-08-18T12:00:00Z"),
+  });
+  reporter.plan([track(1)]);
+  const stored = await reporter.flush({ force: true });
+  assert.ok(stored);
+  const competing: ProgressClaim = {
+    schema_version: 1,
+    run_id: "run",
+    attempt_id: "attempt-2",
+    sequence: 1,
+    created_at: stored.snapshot.updated_at,
+    snapshot: stored.reference,
+  };
+  await objects.write(
+    progressClaimKey("", competing),
+    stableJsonBytes(competing),
+  );
+
+  await assert.rejects(
+    store.loadLatest("run"),
+    /competing progress sequence claims/u,
+  );
 });
 
 test("stable JSON sorts object keys", () => {

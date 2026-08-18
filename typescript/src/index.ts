@@ -68,6 +68,15 @@ export type ProgressPointer = {
   snapshot: ArtifactRef;
 };
 
+export type ProgressClaim = {
+  schema_version: 1;
+  run_id: string;
+  attempt_id: string;
+  sequence: number;
+  created_at: string;
+  snapshot: ArtifactRef;
+};
+
 export type StoredProgress = {
   snapshot: ProgressSnapshot;
   reference: ArtifactRef;
@@ -82,6 +91,7 @@ export interface ProgressStore {
 export interface ProgressObjectStore {
   readonly bucketId: string;
   read(key: string): Promise<Uint8Array | null>;
+  list(prefix: string): Promise<readonly string[]>;
   write(key: string, content: Uint8Array): Promise<void>;
 }
 
@@ -115,6 +125,30 @@ export function progressSnapshotKey(
   );
 }
 
+export function progressClaimPrefix(
+  prefix: string,
+  runId: string,
+  sequence: number,
+): string {
+  requireSafeId(runId, "run_id");
+  requireInteger(sequence, "sequence", 1);
+  return joinKey(
+    normalizePrefix(prefix),
+    "operations",
+    runId,
+    "progress",
+    "claims",
+    `sequence-${sequence.toString().padStart(16, "0")}`,
+  );
+}
+
+export function progressClaimKey(prefix: string, claim: ProgressClaim): string {
+  return joinKey(
+    progressClaimPrefix(prefix, claim.run_id, claim.sequence),
+    `${claim.attempt_id}.json`,
+  );
+}
+
 export class ObjectProgressStore implements ProgressStore {
   readonly #objects: ProgressObjectStore;
   readonly #prefix: string;
@@ -134,21 +168,8 @@ export class ObjectProgressStore implements ProgressStore {
     const raw = await this.#objects.read(
       progressPointerKey(this.#prefix, runId),
     );
-    if (raw === null) return null;
-    const pointer = parseProgressPointer(parseJson(raw));
-    if (pointer.run_id !== runId)
-      throw new Error("progress pointer run_id mismatch");
-    const snapshot = await this.loadReference(pointer.snapshot);
-    if (snapshot.run_id !== pointer.run_id) {
-      throw new Error("progress pointer snapshot run_id mismatch");
-    }
-    if (snapshot.sequence !== pointer.sequence) {
-      throw new Error("progress pointer snapshot sequence mismatch");
-    }
-    if (snapshot.updated_at !== pointer.updated_at) {
-      throw new Error("progress pointer snapshot timestamp mismatch");
-    }
-    return { snapshot, reference: pointer.snapshot };
+    const pointer = raw === null ? null : parseProgressPointer(parseJson(raw));
+    return this.#reconcileLatest(pointer, runId);
   }
 
   async loadReference(reference: ArtifactRef): Promise<ProgressSnapshot> {
@@ -190,21 +211,98 @@ export class ObjectProgressStore implements ProgressStore {
     if (stored === null)
       throw new Error("uploaded progress snapshot is missing");
     verifyBytes(stored, reference);
-    const pointer: ProgressPointer = {
+    const claim: ProgressClaim = {
+      schema_version: PROGRESS_SCHEMA_VERSION,
+      run_id: validated.run_id,
+      attempt_id: validated.attempt_id,
+      sequence: validated.sequence,
+      created_at: validated.updated_at,
+      snapshot: reference,
+    };
+    const claimKey = progressClaimKey(this.#prefix, claim);
+    const claimRaw = stableJsonBytes(claim);
+    const existingClaim = await this.#objects.read(claimKey);
+    if (existingClaim === null) {
+      await this.#objects.write(claimKey, claimRaw);
+    } else if (!bytesEqual(existingClaim, claimRaw)) {
+      throw new Error("immutable progress claim differs");
+    }
+    requireSingleClaim(
+      await this.#loadClaims(validated.run_id, validated.sequence),
+      claim,
+    );
+    await this.#writePointer({
       schema_version: PROGRESS_SCHEMA_VERSION,
       run_id: validated.run_id,
       sequence: validated.sequence,
       updated_at: validated.updated_at,
       snapshot: reference,
-    };
+    });
+    return { snapshot: validated, reference };
+  }
+
+  async #reconcileLatest(
+    pointer: ProgressPointer | null,
+    runId: string,
+  ): Promise<StoredProgress | null> {
+    let current: StoredProgress | null = null;
+    if (pointer !== null) {
+      if (pointer.run_id !== runId)
+        throw new Error("progress pointer run_id mismatch");
+      const snapshot = await this.loadReference(pointer.snapshot);
+      validatePointerSnapshot(pointer, snapshot);
+      current = { snapshot, reference: pointer.snapshot };
+      validateClaim(
+        requireSingleClaim(await this.#loadClaims(runId, snapshot.sequence)),
+        current,
+      );
+    }
+    while (true) {
+      const sequence = current === null ? 1 : current.snapshot.sequence + 1;
+      const claims = await this.#loadClaims(runId, sequence);
+      if (claims.length === 0) return current;
+      const claim = requireSingleClaim(claims);
+      const child: StoredProgress = {
+        snapshot: await this.loadReference(claim.snapshot),
+        reference: claim.snapshot,
+      };
+      validateClaim(claim, child);
+      validatePublication(child.snapshot, current);
+      await this.#writePointer({
+        schema_version: PROGRESS_SCHEMA_VERSION,
+        run_id: child.snapshot.run_id,
+        sequence: child.snapshot.sequence,
+        updated_at: child.snapshot.updated_at,
+        snapshot: child.reference,
+      });
+      current = child;
+    }
+  }
+
+  async #loadClaims(runId: string, sequence: number): Promise<ProgressClaim[]> {
+    const prefix = `${progressClaimPrefix(this.#prefix, runId, sequence)}/`;
+    const paths = await this.#objects.list(prefix);
+    return Promise.all(
+      [...paths]
+        .filter((path) => path.startsWith(prefix) && path.endsWith(".json"))
+        .sort()
+        .map(async (path) => {
+          const raw = await this.#objects.read(path);
+          if (raw === null)
+            throw new Error(`progress claim is missing: ${path}`);
+          return parseProgressClaim(parseJson(raw));
+        }),
+    );
+  }
+
+  async #writePointer(pointer: ProgressPointer): Promise<void> {
     const pointerRaw = stableJsonBytes(pointer);
-    const pointerKey = progressPointerKey(this.#prefix, validated.run_id);
+    const pointerKey = progressPointerKey(this.#prefix, pointer.run_id);
     await this.#objects.write(pointerKey, pointerRaw);
     const verifiedPointer = await this.#objects.read(pointerKey);
     if (verifiedPointer === null || !bytesEqual(verifiedPointer, pointerRaw)) {
       throw new Error("uploaded progress pointer verification failed");
     }
-    return { snapshot: validated, reference };
   }
 }
 
@@ -294,17 +392,20 @@ export class ProgressReporter {
     if (tracks.length === 0)
       throw new Error("plan requires at least one track");
     const keys = new Set<string>();
+    const candidateTracks = new Map(this.#tracks);
     for (const candidate of tracks) {
       const track = parseProgressTrack(candidate);
       if (keys.has(track.key))
         throw new Error("planned track keys must be unique");
       keys.add(track.key);
-      const current = this.#tracks.get(track.key);
+      const current = candidateTracks.get(track.key);
       if (current !== undefined) validateTrackTransition(current, track);
-      this.#tracks.set(track.key, track);
+      candidateTracks.set(track.key, track);
     }
-    if (this.#tracks.size > MAX_TRACKS)
+    if (candidateTracks.size > MAX_TRACKS)
       throw new Error(`tracks must not exceed ${MAX_TRACKS}`);
+    this.#tracks.clear();
+    for (const [key, track] of candidateTracks) this.#tracks.set(key, track);
     this.#markDirty();
   }
 
@@ -454,6 +555,31 @@ export function parseProgressPointer(value: unknown): ProgressPointer {
     run_id: requireSafeId(record.run_id, "run_id"),
     sequence: requireInteger(record.sequence, "sequence", 1),
     updated_at: requireTimestamp(record.updated_at, "updated_at"),
+    snapshot: parseArtifact(record.snapshot),
+  };
+}
+
+export function parseProgressClaim(value: unknown): ProgressClaim {
+  const record = requireRecord(value, "progress claim");
+  requireExactKeys(
+    record,
+    [
+      "schema_version",
+      "run_id",
+      "attempt_id",
+      "sequence",
+      "created_at",
+      "snapshot",
+    ],
+    [],
+  );
+  requireLiteralOne(record.schema_version, "schema_version");
+  return {
+    schema_version: PROGRESS_SCHEMA_VERSION,
+    run_id: requireSafeId(record.run_id, "run_id"),
+    attempt_id: requireSafeId(record.attempt_id, "attempt_id"),
+    sequence: requireInteger(record.sequence, "sequence", 1),
+    created_at: requireTimestamp(record.created_at, "created_at"),
     snapshot: parseArtifact(record.snapshot),
   };
 }
@@ -629,6 +755,58 @@ function validateTrackTransition(
   }
 }
 
+function validatePointerSnapshot(
+  pointer: ProgressPointer,
+  snapshot: ProgressSnapshot,
+): void {
+  if (snapshot.run_id !== pointer.run_id) {
+    throw new Error("progress pointer snapshot run_id mismatch");
+  }
+  if (snapshot.sequence !== pointer.sequence) {
+    throw new Error("progress pointer snapshot sequence mismatch");
+  }
+  if (snapshot.updated_at !== pointer.updated_at) {
+    throw new Error("progress pointer snapshot timestamp mismatch");
+  }
+}
+
+function validateClaim(claim: ProgressClaim, stored: StoredProgress): void {
+  const snapshot = stored.snapshot;
+  if (claim.run_id !== snapshot.run_id) {
+    throw new Error("progress claim snapshot run_id mismatch");
+  }
+  if (claim.attempt_id !== snapshot.attempt_id) {
+    throw new Error("progress claim snapshot attempt_id mismatch");
+  }
+  if (claim.sequence !== snapshot.sequence) {
+    throw new Error("progress claim snapshot sequence mismatch");
+  }
+  if (claim.created_at !== snapshot.updated_at) {
+    throw new Error("progress claim snapshot timestamp mismatch");
+  }
+  if (!equalArtifact(claim.snapshot, stored.reference)) {
+    throw new Error("progress claim snapshot reference mismatch");
+  }
+}
+
+function requireSingleClaim(
+  claims: readonly ProgressClaim[],
+  expected?: ProgressClaim,
+): ProgressClaim {
+  if (claims.length === 0)
+    throw new Error("progress sequence claim is missing");
+  if (claims.length > 1) {
+    throw new Error("competing progress sequence claims detected");
+  }
+  const claim = claims[0];
+  if (claim === undefined)
+    throw new Error("progress sequence claim is missing");
+  if (expected !== undefined && !equalClaim(claim, expected)) {
+    throw new Error("progress sequence is claimed by another attempt");
+  }
+  return claim;
+}
+
 function validatePublication(
   snapshot: ProgressSnapshot,
   latest: StoredProgress | null,
@@ -657,6 +835,12 @@ function equalInput(left: ProgressInput, right: ProgressInput): boolean {
 }
 
 function equalTrack(left: ProgressTrack, right: ProgressTrack): boolean {
+  return (
+    JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right))
+  );
+}
+
+function equalClaim(left: ProgressClaim, right: ProgressClaim): boolean {
   return (
     JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right))
   );

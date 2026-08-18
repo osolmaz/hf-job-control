@@ -14,6 +14,7 @@ from typing import BinaryIO, Protocol, cast
 from huggingface_hub import HfFileSystem
 
 from hf_job_control.models import (
+    MAX_SAFE_INTEGER,
     ArtifactRef,
     JsonObject,
     _optional_string,
@@ -184,8 +185,8 @@ class ProgressSnapshot:
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
         validate_job_id(self.job_id)
-        if self.sequence < 1:
-            raise ValueError("sequence must be >= 1")
+        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
+            raise ValueError("sequence must be a positive JavaScript-safe integer")
         if self.updated_at.tzinfo is None:
             raise ValueError("updated_at must be timezone-aware")
         if not self.tracks or len(self.tracks) > MAX_TRACKS:
@@ -276,8 +277,8 @@ class ProgressPointer:
         if self.schema_version != PROGRESS_SCHEMA_VERSION:
             raise ValueError(f"schema_version must be {PROGRESS_SCHEMA_VERSION}")
         validate_run_id(self.run_id)
-        if self.sequence < 1:
-            raise ValueError("sequence must be >= 1")
+        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
+            raise ValueError("sequence must be a positive JavaScript-safe integer")
         if self.updated_at.tzinfo is None:
             raise ValueError("updated_at must be timezone-aware")
 
@@ -300,6 +301,59 @@ class ProgressPointer:
             run_id=_require_string(data["run_id"], "run_id"),
             sequence=_require_int(data["sequence"], "sequence", 1),
             updated_at=parse_datetime(data["updated_at"], "updated_at"),
+            snapshot=ArtifactRef.from_dict(data["snapshot"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressClaim:
+    """Immutable claim for one logical sequence number."""
+
+    run_id: str
+    attempt_id: str
+    sequence: int
+    created_at: datetime
+    snapshot: ArtifactRef
+    schema_version: int = PROGRESS_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != PROGRESS_SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {PROGRESS_SCHEMA_VERSION}")
+        validate_run_id(self.run_id)
+        validate_attempt_id(self.attempt_id)
+        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
+            raise ValueError("sequence must be a positive JavaScript-safe integer")
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "attempt_id": self.attempt_id,
+            "created_at": format_datetime(self.created_at),
+            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "sequence": self.sequence,
+            "snapshot": self.snapshot.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> ProgressClaim:
+        data = _require_object(value, "progress claim")
+        required = {
+            "schema_version",
+            "run_id",
+            "attempt_id",
+            "sequence",
+            "created_at",
+            "snapshot",
+        }
+        _require_fields(data, required=required, allowed=required)
+        return cls(
+            schema_version=_require_int(data["schema_version"], "schema_version", 1),
+            run_id=_require_string(data["run_id"], "run_id"),
+            attempt_id=_require_string(data["attempt_id"], "attempt_id"),
+            sequence=_require_int(data["sequence"], "sequence", 1),
+            created_at=parse_datetime(data["created_at"], "created_at"),
             snapshot=ArtifactRef.from_dict(data["snapshot"]),
         )
 
@@ -351,6 +405,32 @@ def progress_snapshot_key(prefix: str, run_id: str, digest: str) -> str:
     )
 
 
+def progress_claim_prefix(prefix: str, run_id: str, sequence: int) -> str:
+    """Return the immutable-claim directory for one sequence."""
+
+    validate_run_id(run_id)
+    if sequence < 1 or sequence > MAX_SAFE_INTEGER:
+        raise ValueError("sequence must be a positive JavaScript-safe integer")
+    root = _normalized_prefix(prefix)
+    return _join_key(
+        root,
+        "operations",
+        run_id,
+        "progress",
+        "claims",
+        f"sequence-{sequence:016d}",
+    )
+
+
+def progress_claim_key(prefix: str, claim: ProgressClaim) -> str:
+    """Return the immutable key for one attempt's sequence claim."""
+
+    return _join_key(
+        progress_claim_prefix(prefix, claim.run_id, claim.sequence),
+        f"{claim.attempt_id}.json",
+    )
+
+
 class MemoryProgressStore:
     """In-memory progress store for tests and local adapters."""
 
@@ -359,14 +439,18 @@ class MemoryProgressStore:
         self.bucket_id = bucket_id
         self.prefix = _normalized_prefix(prefix)
         self.objects: dict[str, bytes] = {}
+        self.claims: dict[str, bytes] = {}
         self.pointers: dict[str, ProgressPointer] = {}
         self._publication_lock = _shared_publication_lock(bucket_id, self.prefix)
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
-        pointer = self.pointers.get(run_id)
-        if pointer is None:
-            return None
-        return _stored_from_pointer(pointer, run_id, self.load_reference)
+        return _reconcile_latest(
+            self.pointers.get(run_id),
+            run_id,
+            self.load_reference,
+            self._load_claims,
+            lambda pointer: self.pointers.__setitem__(run_id, pointer),
+        )
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -389,8 +473,27 @@ class MemoryProgressStore:
             if existing is not None and existing != raw:
                 raise RuntimeError("immutable progress snapshot differs")
             self.objects[reference.key] = raw
+            claim = _claim_for(snapshot, reference)
+            claim_key = progress_claim_key(self.prefix, claim)
+            claim_raw = stable_json_bytes(claim.to_dict())
+            existing_claim = self.claims.get(claim_key)
+            if existing_claim is not None and existing_claim != claim_raw:
+                raise RuntimeError("immutable progress claim differs")
+            self.claims[claim_key] = claim_raw
+            _require_single_claim(self._load_claims(snapshot.run_id, snapshot.sequence), claim)
             self.pointers[snapshot.run_id] = pointer
             return StoredProgress(snapshot, reference)
+
+    def _load_claims(self, run_id: str, sequence: int) -> list[ProgressClaim]:
+        prefix = f"{progress_claim_prefix(self.prefix, run_id, sequence)}/"
+        return sorted(
+            (
+                ProgressClaim.from_dict(parse_json_object(raw))
+                for key, raw in self.claims.items()
+                if key.startswith(prefix)
+            ),
+            key=lambda claim: claim.attempt_id,
+        )
 
 
 class LocalProgressStore:
@@ -405,10 +508,18 @@ class LocalProgressStore:
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
         pointer_path = self.root / progress_pointer_key(self.prefix, run_id)
-        if not pointer_path.exists():
-            return None
-        pointer = ProgressPointer.from_dict(parse_json_object(pointer_path.read_bytes()))
-        return _stored_from_pointer(pointer, run_id, self.load_reference)
+        pointer = (
+            None
+            if not pointer_path.exists()
+            else ProgressPointer.from_dict(parse_json_object(pointer_path.read_bytes()))
+        )
+        return _reconcile_latest(
+            pointer,
+            run_id,
+            self.load_reference,
+            self._load_claims,
+            self._write_pointer,
+        )
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -434,9 +545,34 @@ class LocalProgressStore:
             else:
                 destination.write_bytes(raw)
             _verify_progress_bytes(destination.read_bytes(), reference)
-            pointer_path = self.root / progress_pointer_key(self.prefix, snapshot.run_id)
-            _write_atomic(pointer_path, stable_json_bytes(pointer.to_dict()))
+            claim = _claim_for(snapshot, reference)
+            claim_path = self.root / progress_claim_key(self.prefix, claim)
+            claim_raw = stable_json_bytes(claim.to_dict())
+            if claim_path.exists():
+                if claim_path.read_bytes() != claim_raw:
+                    raise RuntimeError("immutable progress claim differs")
+            else:
+                claim_path.parent.mkdir(parents=True, exist_ok=True)
+                claim_path.write_bytes(claim_raw)
+            _require_single_claim(self._load_claims(snapshot.run_id, snapshot.sequence), claim)
+            self._write_pointer(pointer)
             return StoredProgress(snapshot, reference)
+
+    def _load_claims(self, run_id: str, sequence: int) -> list[ProgressClaim]:
+        directory = self.root / progress_claim_prefix(self.prefix, run_id, sequence)
+        if not directory.exists():
+            return []
+        return sorted(
+            (
+                ProgressClaim.from_dict(parse_json_object(path.read_bytes()))
+                for path in directory.glob("*.json")
+            ),
+            key=lambda claim: claim.attempt_id,
+        )
+
+    def _write_pointer(self, pointer: ProgressPointer) -> None:
+        pointer_path = self.root / progress_pointer_key(self.prefix, pointer.run_id)
+        _write_atomic(pointer_path, stable_json_bytes(pointer.to_dict()))
 
 
 class BucketFileSystem(Protocol):
@@ -447,6 +583,9 @@ class BucketFileSystem(Protocol):
 
     def open(self, path: str, mode: str) -> BinaryIO:
         """Open one Bucket object."""
+
+    def glob(self, path: str) -> list[str]:
+        """List Bucket objects matching one glob pattern."""
 
 
 class HubBucketProgressStore:
@@ -469,13 +608,18 @@ class HubBucketProgressStore:
         self._publication_lock = _shared_publication_lock(bucket_id, self.prefix)
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
-        pointer_key = progress_pointer_key(self.prefix, run_id)
-        path = self._url(pointer_key)
-        if not self.filesystem.exists(path):
-            return None
-        with self.filesystem.open(path, "rb") as source:
-            pointer = ProgressPointer.from_dict(parse_json_object(source.read()))
-        return _stored_from_pointer(pointer, run_id, self.load_reference)
+        path = self._url(progress_pointer_key(self.prefix, run_id))
+        pointer = None
+        if self.filesystem.exists(path):
+            with self.filesystem.open(path, "rb") as source:
+                pointer = ProgressPointer.from_dict(parse_json_object(source.read()))
+        return _reconcile_latest(
+            pointer,
+            run_id,
+            self.load_reference,
+            self._load_claims,
+            self._write_pointer,
+        )
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -502,14 +646,43 @@ class HubBucketProgressStore:
                 with self.filesystem.open(destination, "wb") as target:
                     target.write(raw)
             self.load_reference(reference)
-            pointer_key = progress_pointer_key(self.prefix, snapshot.run_id)
-            pointer_raw = stable_json_bytes(pointer.to_dict())
-            with self.filesystem.open(self._url(pointer_key), "wb") as target:
-                target.write(pointer_raw)
-            with self.filesystem.open(self._url(pointer_key), "rb") as source:
-                if source.read() != pointer_raw:
-                    raise RuntimeError("uploaded progress pointer verification failed")
+            claim = _claim_for(snapshot, reference)
+            claim_key = progress_claim_key(self.prefix, claim)
+            claim_raw = stable_json_bytes(claim.to_dict())
+            claim_url = self._url(claim_key)
+            if self.filesystem.exists(claim_url):
+                with self.filesystem.open(claim_url, "rb") as source:
+                    if source.read() != claim_raw:
+                        raise RuntimeError("immutable progress claim differs")
+            else:
+                with self.filesystem.open(claim_url, "wb") as target:
+                    target.write(claim_raw)
+            _require_single_claim(self._load_claims(snapshot.run_id, snapshot.sequence), claim)
+            self._write_pointer(pointer)
             return StoredProgress(snapshot, reference)
+
+    def _load_claims(self, run_id: str, sequence: int) -> list[ProgressClaim]:
+        pattern = f"{self._url(progress_claim_prefix(self.prefix, run_id, sequence))}/*.json"
+        return sorted(
+            (
+                ProgressClaim.from_dict(parse_json_object(self._read(path)))
+                for path in self.filesystem.glob(pattern)
+            ),
+            key=lambda claim: claim.attempt_id,
+        )
+
+    def _write_pointer(self, pointer: ProgressPointer) -> None:
+        pointer_url = self._url(progress_pointer_key(self.prefix, pointer.run_id))
+        pointer_raw = stable_json_bytes(pointer.to_dict())
+        with self.filesystem.open(pointer_url, "wb") as target:
+            target.write(pointer_raw)
+        with self.filesystem.open(pointer_url, "rb") as source:
+            if source.read() != pointer_raw:
+                raise RuntimeError("uploaded progress pointer verification failed")
+
+    def _read(self, path: str) -> bytes:
+        with self.filesystem.open(path, "rb") as source:
+            return source.read()
 
     def _url(self, key: str) -> str:
         return f"hf://buckets/{self.bucket_id}/{key}"
@@ -574,13 +747,15 @@ class ProgressReporter:
             incoming_keys = [track.key for track in tracks]
             if len(set(incoming_keys)) != len(incoming_keys):
                 raise ValueError("planned track keys must be unique")
+            candidate = dict(self._tracks)
             for track in tracks:
-                current = self._tracks.get(track.key)
+                current = candidate.get(track.key)
                 if current is not None:
                     _validate_track_transition(current, track)
-                self._tracks[track.key] = track
-            if len(self._tracks) > MAX_TRACKS:
+                candidate[track.key] = track
+            if len(candidate) > MAX_TRACKS:
                 raise ValueError(f"tracks must not exceed {MAX_TRACKS}")
+            self._tracks = candidate
             self._dirty = True
 
     def update(self, track: ProgressTrack) -> None:
@@ -675,6 +850,74 @@ def _stored_from_pointer(
     return StoredProgress(snapshot, pointer.snapshot)
 
 
+def _claim_for(snapshot: ProgressSnapshot, reference: ArtifactRef) -> ProgressClaim:
+    return ProgressClaim(
+        run_id=snapshot.run_id,
+        attempt_id=snapshot.attempt_id,
+        sequence=snapshot.sequence,
+        created_at=snapshot.updated_at,
+        snapshot=reference,
+    )
+
+
+def _validate_claim(claim: ProgressClaim, stored: StoredProgress) -> None:
+    snapshot = stored.snapshot
+    if claim.run_id != snapshot.run_id:
+        raise ValueError("progress claim snapshot run_id mismatch")
+    if claim.attempt_id != snapshot.attempt_id:
+        raise ValueError("progress claim snapshot attempt_id mismatch")
+    if claim.sequence != snapshot.sequence:
+        raise ValueError("progress claim snapshot sequence mismatch")
+    if claim.created_at != snapshot.updated_at:
+        raise ValueError("progress claim snapshot timestamp mismatch")
+    if claim.snapshot != stored.reference:
+        raise ValueError("progress claim snapshot reference mismatch")
+
+
+def _require_single_claim(
+    claims: list[ProgressClaim],
+    expected: ProgressClaim | None = None,
+) -> ProgressClaim:
+    if not claims:
+        raise ValueError("progress sequence claim is missing")
+    if len(claims) > 1:
+        raise RuntimeError("competing progress sequence claims detected")
+    claim = claims[0]
+    if expected is not None and claim != expected:
+        raise RuntimeError("progress sequence is claimed by another attempt")
+    return claim
+
+
+def _reconcile_latest(
+    pointer: ProgressPointer | None,
+    run_id: str,
+    load: Callable[[ArtifactRef], ProgressSnapshot],
+    load_claims: Callable[[str, int], list[ProgressClaim]],
+    write_pointer: Callable[[ProgressPointer], None],
+) -> StoredProgress | None:
+    current = None if pointer is None else _stored_from_pointer(pointer, run_id, load)
+    if current is not None:
+        claim = _require_single_claim(load_claims(run_id, current.snapshot.sequence))
+        _validate_claim(claim, current)
+    while True:
+        next_sequence = 1 if current is None else current.snapshot.sequence + 1
+        claims = load_claims(run_id, next_sequence)
+        if not claims:
+            return current
+        claim = _require_single_claim(claims)
+        child = StoredProgress(load(claim.snapshot), claim.snapshot)
+        _validate_claim(claim, child)
+        _validate_publication(child.snapshot, current)
+        pointer = ProgressPointer(
+            run_id=child.snapshot.run_id,
+            sequence=child.snapshot.sequence,
+            updated_at=child.snapshot.updated_at,
+            snapshot=child.reference,
+        )
+        write_pointer(pointer)
+        current = child
+
+
 def _prepare_publication(
     snapshot: ProgressSnapshot,
     latest: StoredProgress | None,
@@ -700,10 +943,10 @@ def _prepare_publication(
 
 
 def _validate_track_counts(track: ProgressTrack) -> None:
-    if track.completed is not None and track.completed < 0:
-        raise ValueError("completed must be >= 0")
-    if track.total is not None and track.total < 0:
-        raise ValueError("total must be >= 0")
+    if track.completed is not None and not 0 <= track.completed <= MAX_SAFE_INTEGER:
+        raise ValueError("completed must be a nonnegative JavaScript-safe integer")
+    if track.total is not None and not 0 <= track.total <= MAX_SAFE_INTEGER:
+        raise ValueError("total must be a nonnegative JavaScript-safe integer")
     if track.total is not None and track.completed is None:
         raise ValueError("completed is required when total is set")
     if track.completed is not None and track.unit is None:

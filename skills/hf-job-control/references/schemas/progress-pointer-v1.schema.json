@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
-    "sequence": {"type": "integer", "minimum": 1},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
     "updated_at": {"type": "string", "format": "date-time"},
     "snapshot": {
       "type": "object",
@@ -21,7 +21,7 @@
         },
         "key": {"type": "string", "minLength": 1, "maxLength": 1024},
         "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "bytes": {"type": "integer", "minimum": 1}
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
       }
     }
   }
