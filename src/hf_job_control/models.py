@@ -545,6 +545,7 @@ class RunStatus:
             raise ValueError("updated_at must be timezone-aware")
         if self.last_applied_generation < 0:
             raise ValueError("last_applied_generation must be >= 0")
+        _validate_status_progress(self)
         if self.message is not None and len(self.message) > 2000:
             raise ValueError("message must be at most 2000 characters")
 
@@ -625,6 +626,18 @@ class RunStatus:
             progress=None if progress is None else ProgressSnapshot.from_dict(progress),
             message=_optional_string(data, "message"),
         )
+
+
+def _validate_status_progress(status: RunStatus) -> None:
+    progress = status.progress
+    if progress is None:
+        return
+    if progress.run_id != status.run_id:
+        raise ValueError("progress run_id must match status run_id")
+    if progress.attempt_id != status.attempt_id:
+        raise ValueError("progress attempt_id must match status attempt_id")
+    if progress.job_id is not None and progress.job_id != status.job_id:
+        raise ValueError("progress job_id must match status job_id")
 
 
 @dataclass(frozen=True, slots=True)

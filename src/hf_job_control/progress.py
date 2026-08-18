@@ -35,6 +35,8 @@ from hf_job_control.models import (
 
 PROGRESS_SCHEMA_VERSION = 1
 MAX_TRACKS = 256
+_PUBLICATION_LOCKS_GUARD = threading.Lock()
+_PUBLICATION_LOCKS: dict[tuple[str, str], threading.RLock] = {}
 
 
 class ProgressStatus(StrEnum):
@@ -358,12 +360,13 @@ class MemoryProgressStore:
         self.prefix = _normalized_prefix(prefix)
         self.objects: dict[str, bytes] = {}
         self.pointers: dict[str, ProgressPointer] = {}
+        self._publication_lock = _shared_publication_lock(bucket_id, self.prefix)
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
         pointer = self.pointers.get(run_id)
         if pointer is None:
             return None
-        return StoredProgress(self.load_reference(pointer.snapshot), pointer.snapshot)
+        return _stored_from_pointer(pointer, run_id, self.load_reference)
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -375,18 +378,19 @@ class MemoryProgressStore:
         return ProgressSnapshot.from_dict(parse_json_object(raw))
 
     def publish(self, snapshot: ProgressSnapshot) -> StoredProgress:
-        raw, reference, pointer = _prepare_publication(
-            snapshot,
-            self.load_latest(snapshot.run_id),
-            self.bucket_id,
-            self.prefix,
-        )
-        existing = self.objects.get(reference.key)
-        if existing is not None and existing != raw:
-            raise RuntimeError("immutable progress snapshot differs")
-        self.objects[reference.key] = raw
-        self.pointers[snapshot.run_id] = pointer
-        return StoredProgress(snapshot, reference)
+        with self._publication_lock:
+            raw, reference, pointer = _prepare_publication(
+                snapshot,
+                self.load_latest(snapshot.run_id),
+                self.bucket_id,
+                self.prefix,
+            )
+            existing = self.objects.get(reference.key)
+            if existing is not None and existing != raw:
+                raise RuntimeError("immutable progress snapshot differs")
+            self.objects[reference.key] = raw
+            self.pointers[snapshot.run_id] = pointer
+            return StoredProgress(snapshot, reference)
 
 
 class LocalProgressStore:
@@ -397,15 +401,14 @@ class LocalProgressStore:
         self.root = root
         self.bucket_id = bucket_id
         self.prefix = _normalized_prefix(prefix)
+        self._publication_lock = _shared_publication_lock(bucket_id, self.prefix)
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
         pointer_path = self.root / progress_pointer_key(self.prefix, run_id)
         if not pointer_path.exists():
             return None
         pointer = ProgressPointer.from_dict(parse_json_object(pointer_path.read_bytes()))
-        if pointer.run_id != run_id:
-            raise ValueError("progress pointer run_id mismatch")
-        return StoredProgress(self.load_reference(pointer.snapshot), pointer.snapshot)
+        return _stored_from_pointer(pointer, run_id, self.load_reference)
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -416,23 +419,24 @@ class LocalProgressStore:
         return ProgressSnapshot.from_dict(parse_json_object(raw))
 
     def publish(self, snapshot: ProgressSnapshot) -> StoredProgress:
-        raw, reference, pointer = _prepare_publication(
-            snapshot,
-            self.load_latest(snapshot.run_id),
-            self.bucket_id,
-            self.prefix,
-        )
-        destination = _safe_local_path(self.root, reference.key)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            if destination.read_bytes() != raw:
-                raise RuntimeError("immutable progress snapshot differs")
-        else:
-            destination.write_bytes(raw)
-        _verify_progress_bytes(destination.read_bytes(), reference)
-        pointer_path = self.root / progress_pointer_key(self.prefix, snapshot.run_id)
-        _write_atomic(pointer_path, stable_json_bytes(pointer.to_dict()))
-        return StoredProgress(snapshot, reference)
+        with self._publication_lock:
+            raw, reference, pointer = _prepare_publication(
+                snapshot,
+                self.load_latest(snapshot.run_id),
+                self.bucket_id,
+                self.prefix,
+            )
+            destination = _safe_local_path(self.root, reference.key)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                if destination.read_bytes() != raw:
+                    raise RuntimeError("immutable progress snapshot differs")
+            else:
+                destination.write_bytes(raw)
+            _verify_progress_bytes(destination.read_bytes(), reference)
+            pointer_path = self.root / progress_pointer_key(self.prefix, snapshot.run_id)
+            _write_atomic(pointer_path, stable_json_bytes(pointer.to_dict()))
+            return StoredProgress(snapshot, reference)
 
 
 class BucketFileSystem(Protocol):
@@ -462,6 +466,7 @@ class HubBucketProgressStore:
         self.filesystem = (
             cast(BucketFileSystem, HfFileSystem(token=token)) if filesystem is None else filesystem
         )
+        self._publication_lock = _shared_publication_lock(bucket_id, self.prefix)
 
     def load_latest(self, run_id: str) -> StoredProgress | None:
         pointer_key = progress_pointer_key(self.prefix, run_id)
@@ -470,9 +475,7 @@ class HubBucketProgressStore:
             return None
         with self.filesystem.open(path, "rb") as source:
             pointer = ProgressPointer.from_dict(parse_json_object(source.read()))
-        if pointer.run_id != run_id:
-            raise ValueError("progress pointer run_id mismatch")
-        return StoredProgress(self.load_reference(pointer.snapshot), pointer.snapshot)
+        return _stored_from_pointer(pointer, run_id, self.load_reference)
 
     def load_reference(self, reference: ArtifactRef) -> ProgressSnapshot:
         if reference.bucket != self.bucket_id:
@@ -483,29 +486,30 @@ class HubBucketProgressStore:
         return ProgressSnapshot.from_dict(parse_json_object(raw))
 
     def publish(self, snapshot: ProgressSnapshot) -> StoredProgress:
-        raw, reference, pointer = _prepare_publication(
-            snapshot,
-            self.load_latest(snapshot.run_id),
-            self.bucket_id,
-            self.prefix,
-        )
-        destination = self._url(reference.key)
-        if self.filesystem.exists(destination):
-            with self.filesystem.open(destination, "rb") as source:
-                if source.read() != raw:
-                    raise RuntimeError("immutable progress snapshot differs")
-        else:
-            with self.filesystem.open(destination, "wb") as target:
-                target.write(raw)
-        self.load_reference(reference)
-        pointer_key = progress_pointer_key(self.prefix, snapshot.run_id)
-        pointer_raw = stable_json_bytes(pointer.to_dict())
-        with self.filesystem.open(self._url(pointer_key), "wb") as target:
-            target.write(pointer_raw)
-        with self.filesystem.open(self._url(pointer_key), "rb") as source:
-            if source.read() != pointer_raw:
-                raise RuntimeError("uploaded progress pointer verification failed")
-        return StoredProgress(snapshot, reference)
+        with self._publication_lock:
+            raw, reference, pointer = _prepare_publication(
+                snapshot,
+                self.load_latest(snapshot.run_id),
+                self.bucket_id,
+                self.prefix,
+            )
+            destination = self._url(reference.key)
+            if self.filesystem.exists(destination):
+                with self.filesystem.open(destination, "rb") as source:
+                    if source.read() != raw:
+                        raise RuntimeError("immutable progress snapshot differs")
+            else:
+                with self.filesystem.open(destination, "wb") as target:
+                    target.write(raw)
+            self.load_reference(reference)
+            pointer_key = progress_pointer_key(self.prefix, snapshot.run_id)
+            pointer_raw = stable_json_bytes(pointer.to_dict())
+            with self.filesystem.open(self._url(pointer_key), "wb") as target:
+                target.write(pointer_raw)
+            with self.filesystem.open(self._url(pointer_key), "rb") as source:
+                if source.read() != pointer_raw:
+                    raise RuntimeError("uploaded progress pointer verification failed")
+            return StoredProgress(snapshot, reference)
 
     def _url(self, key: str) -> str:
         return f"hf://buckets/{self.bucket_id}/{key}"
@@ -541,19 +545,17 @@ class ProgressReporter:
         self._latest = store.load_latest(run_id)
         previous = self._latest.snapshot if self._latest is not None else None
         self._sequence = 0 if previous is None else previous.sequence
-        self._tracks: dict[str, ProgressTrack] = (
-            {}
-            if previous is None or previous.input != input
-            else {track.key: track for track in previous.tracks}
-        )
-        self._state = ProgressStatus.RUNNING
-        self._dirty = (
-            previous is None
-            or previous.input != input
-            or previous.attempt_id != attempt_id
-            or previous.job_id != job_id
-            or previous.state is not ProgressStatus.RUNNING
-        )
+        self._tracks: dict[str, ProgressTrack]
+        if previous is not None and previous.input == input:
+            self._tracks = {track.key: track for track in previous.tracks}
+            self._state = previous.state
+            self._dirty = previous.state not in TERMINAL_PROGRESS_STATUSES and (
+                previous.attempt_id != attempt_id or previous.job_id != job_id
+            )
+        else:
+            self._tracks = {}
+            self._state = ProgressStatus.RUNNING
+            self._dirty = True
         self._last_flush_at = None if previous is None else previous.updated_at
 
     @property
@@ -644,6 +646,33 @@ class ProgressReporter:
             self._last_flush_at = now
             self._dirty = False
             return stored
+
+
+def _shared_publication_lock(bucket_id: str, prefix: str) -> threading.RLock:
+    key = (bucket_id, prefix)
+    with _PUBLICATION_LOCKS_GUARD:
+        lock = _PUBLICATION_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PUBLICATION_LOCKS[key] = lock
+        return lock
+
+
+def _stored_from_pointer(
+    pointer: ProgressPointer,
+    run_id: str,
+    load: Callable[[ArtifactRef], ProgressSnapshot],
+) -> StoredProgress:
+    if pointer.run_id != run_id:
+        raise ValueError("progress pointer run_id mismatch")
+    snapshot = load(pointer.snapshot)
+    if snapshot.run_id != pointer.run_id:
+        raise ValueError("progress pointer snapshot run_id mismatch")
+    if snapshot.sequence != pointer.sequence:
+        raise ValueError("progress pointer snapshot sequence mismatch")
+    if snapshot.updated_at != pointer.updated_at:
+        raise ValueError("progress pointer snapshot timestamp mismatch")
+    return StoredProgress(snapshot, pointer.snapshot)
 
 
 def _prepare_publication(

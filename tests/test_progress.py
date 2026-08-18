@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from hf_job_control.progress import (
     LocalProgressStore,
     MemoryProgressStore,
     ProgressInput,
+    ProgressPointer,
     ProgressReporter,
     ProgressSnapshot,
     ProgressStatus,
@@ -119,6 +121,36 @@ def test_reporter_rejects_regression_but_accepts_new_plan() -> None:
     assert reporter.tracks == (track(0, plan_id="plan-2", total=20),)
 
 
+def test_competing_reporters_cannot_overwrite_the_same_sequence() -> None:
+    store = MemoryProgressStore()
+    reporters = [
+        ProgressReporter(
+            run_id="run",
+            attempt_id=f"attempt-{index}",
+            input=INPUT,
+            store=store,
+            clock=lambda: NOW,
+        )
+        for index in (1, 2)
+    ]
+    for reporter in reporters:
+        reporter.plan([track(1)])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(reporter.flush, force=True) for reporter in reporters]
+    results: list[object] = []
+    for future in futures:
+        try:
+            results.append(future.result())
+        except ValueError as error:
+            results.append(error)
+
+    assert sum(isinstance(result, ValueError) for result in results) == 1
+    latest = store.load_latest("run")
+    assert latest is not None
+    assert latest.snapshot.sequence == 1
+
+
 def test_reporter_restores_committed_progress_for_new_attempt() -> None:
     store = MemoryProgressStore()
     first = ProgressReporter(
@@ -177,6 +209,31 @@ def test_new_input_starts_new_tracks_but_keeps_sequence_chain() -> None:
     assert current.snapshot.previous == published.reference
 
 
+def test_terminal_state_is_preserved_after_restart() -> None:
+    store = MemoryProgressStore()
+    first = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    first.plan([track(10, status=ProgressStatus.COMPLETED)])
+    first.set_state(ProgressStatus.COMPLETED)
+    assert first.flush(force=True) is not None
+
+    replacement = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-2",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW + timedelta(minutes=1),
+    )
+    assert replacement.flush(force=True) is None
+    with pytest.raises(ValueError, match="terminal progress state"):
+        replacement.set_state(ProgressStatus.RUNNING)
+
+
 def test_terminal_track_and_run_cannot_reopen() -> None:
     reporter = ProgressReporter(
         run_id="run",
@@ -211,6 +268,29 @@ def test_local_store_verifies_pointer_and_snapshot(tmp_path: Path) -> None:
     snapshot_path = tmp_path / stored.reference.key
     snapshot_path.write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="byte count mismatch"):
+        store.load_latest("run")
+
+
+def test_pointer_metadata_must_match_snapshot() -> None:
+    store = MemoryProgressStore()
+    reporter = ProgressReporter(
+        run_id="other-run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    reporter.plan([track(1)])
+    stored = reporter.flush(force=True)
+    assert stored is not None
+    store.pointers["run"] = ProgressPointer(
+        run_id="run",
+        sequence=stored.snapshot.sequence,
+        updated_at=stored.snapshot.updated_at,
+        snapshot=stored.reference,
+    )
+
+    with pytest.raises(ValueError, match="snapshot run_id mismatch"):
         store.load_latest("run")
 
 
