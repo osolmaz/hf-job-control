@@ -31,7 +31,7 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('typescript-dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "format": "prettier --check package.json tsconfig.json typescript",
     "format:write": "prettier --write package.json tsconfig.json typescript",
     "test": "npm run build && node --test typescript-dist/tests/*.test.js",
