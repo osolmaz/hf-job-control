@@ -30,6 +30,7 @@ from hf_job_control.models import (
     validate_job_id,
     validate_run_id,
 )
+from hf_job_control.progress import ProgressSnapshot
 from hf_job_control.stores import ArtifactStore, ControlStore, StatusStore
 
 
@@ -94,6 +95,7 @@ class Controller:
         self._boundary = None if previous is None else previous.boundary
         self._checkpoint = None if previous is None else previous.checkpoint
         self._metrics = {} if previous is None else previous.metrics
+        self._progress = None if previous is None else previous.progress
         self._started = False
 
     def start(self, adapter: CheckpointAdapter) -> StartResult:
@@ -153,6 +155,7 @@ class Controller:
         boundary: Boundary,
         adapter: CheckpointAdapter,
         metrics: JsonObject | None = None,
+        progress: ProgressSnapshot | None = None,
     ) -> Decision:
         """Checkpoint one safe boundary, then apply the latest desired state."""
 
@@ -168,6 +171,7 @@ class Controller:
         self._boundary = boundary
         self._checkpoint = checkpoint
         self._metrics = current_metrics
+        self._progress = progress
         self._publish_status(RunState.RUNNING, message=metric_error)
         try:
             snapshot = self._fetch_control()
@@ -302,6 +306,7 @@ class Controller:
             boundary=self._boundary,
             checkpoint=self._checkpoint,
             metrics=self._metrics,
+            progress=self._progress,
             message=message,
         )
         self.status_store.publish_status(status)

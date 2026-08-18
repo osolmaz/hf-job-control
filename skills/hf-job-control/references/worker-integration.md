@@ -524,6 +524,26 @@ Avoid a sequence where output publication succeeds but the checkpoint records
 the previous cursor. Either make output publication idempotent or write an
 atomic manifest that defines the committed boundary.
 
+## Progress
+
+Use `ProgressReporter` for committed work with a factual completed count and,
+when known, a fixed total. Give every track a stable key and a `plan_id` that
+identifies one input, denominator, unit, and method.
+
+A worker publishes progress only after the corresponding output is durable. It
+flushes at safe boundaries and at least every 30 seconds while committed work
+moves. A replacement attempt restores the latest snapshot, recomputes counts
+from durable application state, and rejects progress ahead of that state.
+
+Python workers can use `HubBucketProgressStore`. TypeScript workers use the
+package's `ObjectProgressStore` with their existing authenticated Bucket IO.
+Standalone progress reporting does not require adopting lifecycle control in
+the same change.
+
+Do not report in-flight requests as completed work. Do not calculate a finish
+time in the worker. Monitoring systems use successive snapshots from one fixed
+plan to calculate rates and finish-time ranges.
+
 ## Metrics
 
 Pass only JSON-compatible finite metrics:

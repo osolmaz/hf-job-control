@@ -20,6 +20,7 @@
     "boundary": {"type": "object"},
     "checkpoint": {"type": "object"},
     "metrics": {"type": "object"},
+    "progress": {"type": "object"},
     "message": {"type": "string", "maxLength": 2000}
   }
 }

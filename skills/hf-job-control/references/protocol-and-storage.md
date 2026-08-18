@@ -16,6 +16,8 @@ The skill carries matching copies for
 [control](schemas/control-v1.schema.json),
 [launch specifications](schemas/launch-spec-v1.schema.json),
 [status](schemas/run-status-v1.schema.json),
+[progress](schemas/progress-v1.schema.json),
+[progress pointers](schemas/progress-pointer-v1.schema.json),
 [receipts](schemas/applied-control-v1.schema.json), and
 [checkpoint manifests](schemas/checkpoint-manifest-v1.schema.json). The Python
 domain models apply additional semantic checks.
@@ -63,6 +65,13 @@ The artifact Bucket stores checkpoint bundles:
 
 ```text
 <run_id>/checkpoints/sha256-<bundle-sha256>/checkpoint.hfjob
+```
+
+An application can store progress in its existing approved Bucket:
+
+```text
+operations/<run_id>/progress/current.json
+operations/<run_id>/progress/snapshots/sha256-<snapshot-sha256>/progress.json
 ```
 
 The control and status stores are Git-backed Hugging Face dataset repositories.
@@ -474,6 +483,24 @@ The actual v0.1 controller order is:
 
 An auditor should expect a checkpoint and running-status commit before the
 receipt for a boundary action.
+
+## Progress
+
+Progress snapshots follow
+[`progress-v1.schema.json`](schemas/progress-v1.schema.json). The mutable
+pointer follows
+[`progress-pointer-v1.schema.json`](schemas/progress-pointer-v1.schema.json).
+Each snapshot identifies the logical run, physical attempt, exact input,
+producer contract, ordered sequence, and independent progress tracks.
+
+The reporter uploads and verifies the immutable snapshot before replacing the
+pointer. A replacement attempt restores the pointer and reconciles its counts
+with committed application output. Counts cannot move backward within one
+`plan_id`; a changed input, denominator, unit, or method uses a new plan.
+
+Applications report committed facts. Monitoring systems calculate rates and
+finish-time ranges. A progress snapshot does not replace checkpoints, receipts,
+or final output manifests.
 
 ## Metrics
 
