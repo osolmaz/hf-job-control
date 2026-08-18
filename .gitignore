@@ -8,5 +8,6 @@ __pycache__/
 node_modules/
 build/
 dist/
+typescript-dist/
 *.egg-info/
 .schemator/
