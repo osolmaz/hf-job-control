@@ -20,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: git diff --exit-code -- typescript-dist/src
+      - run: test -z "$(git status --porcelain -- typescript-dist/src)"
       - run: npm audit
 
   test:
