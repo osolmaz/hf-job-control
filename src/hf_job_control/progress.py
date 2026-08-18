@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -38,6 +40,9 @@ PROGRESS_SCHEMA_VERSION = 1
 MAX_TRACKS = 256
 _PUBLICATION_LOCKS_GUARD = threading.Lock()
 _PUBLICATION_LOCKS: dict[tuple[str, str], threading.RLock] = {}
+_PROGRESS_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 class ProgressStatus(StrEnum):
@@ -159,7 +164,7 @@ class ProgressTrack:
             source_updated_at=(
                 None
                 if source_updated_at is None
-                else parse_datetime(source_updated_at, "source_updated_at")
+                else _parse_progress_datetime(source_updated_at, "source_updated_at")
             ),
         )
 
@@ -250,7 +255,7 @@ class ProgressSnapshot:
             attempt_id=_require_string(data["attempt_id"], "attempt_id"),
             job_id=_optional_string(data, "job_id"),
             sequence=_require_int(data["sequence"], "sequence", 1),
-            updated_at=parse_datetime(data["updated_at"], "updated_at"),
+            updated_at=_parse_progress_datetime(data["updated_at"], "updated_at"),
             input=ProgressInput.from_dict(data["input"]),
             state=ProgressStatus(_require_string(data["state"], "state")),
             tracks=tuple(
@@ -300,7 +305,7 @@ class ProgressPointer:
             schema_version=_require_int(data["schema_version"], "schema_version", 1),
             run_id=_require_string(data["run_id"], "run_id"),
             sequence=_require_int(data["sequence"], "sequence", 1),
-            updated_at=parse_datetime(data["updated_at"], "updated_at"),
+            updated_at=_parse_progress_datetime(data["updated_at"], "updated_at"),
             snapshot=ArtifactRef.from_dict(data["snapshot"]),
         )
 
@@ -353,7 +358,7 @@ class ProgressClaim:
             run_id=_require_string(data["run_id"], "run_id"),
             attempt_id=_require_string(data["attempt_id"], "attempt_id"),
             sequence=_require_int(data["sequence"], "sequence", 1),
-            created_at=parse_datetime(data["created_at"], "created_at"),
+            created_at=_parse_progress_datetime(data["created_at"], "created_at"),
             snapshot=ArtifactRef.from_dict(data["snapshot"]),
         )
 
@@ -700,20 +705,30 @@ class ProgressReporter:
         store: ProgressStore,
         job_id: str | None = None,
         flush_interval: timedelta = timedelta(seconds=30),
+        publish_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
         clock: Callable[[], datetime] = utc_now,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         validate_run_id(run_id)
         validate_attempt_id(attempt_id)
         validate_job_id(job_id)
         if flush_interval.total_seconds() < 0:
             raise ValueError("flush_interval must be nonnegative")
+        if publish_attempts < 1:
+            raise ValueError("publish_attempts must be >= 1")
+        if retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must be nonnegative")
         self.run_id = run_id
         self.attempt_id = attempt_id
         self.job_id = job_id
         self.input = input
         self.store = store
         self.flush_interval = flush_interval
+        self.publish_attempts = publish_attempts
+        self.retry_delay_seconds = retry_delay_seconds
         self.clock = clock
+        self.sleep = sleep
         self._lock = threading.RLock()
         self._latest = store.load_latest(run_id)
         previous = self._latest.snapshot if self._latest is not None else None
@@ -815,12 +830,25 @@ class ProgressReporter:
                 tracks=tuple(self._tracks[key] for key in sorted(self._tracks)),
                 previous=None if self._latest is None else self._latest.reference,
             )
-            stored = self.store.publish(snapshot)
+            stored = self._publish_with_retry(snapshot)
             self._latest = stored
             self._sequence = snapshot.sequence
             self._last_flush_at = now
             self._dirty = False
             return stored
+
+    def _publish_with_retry(self, snapshot: ProgressSnapshot) -> StoredProgress:
+        last_error: OSError | None = None
+        for attempt in range(self.publish_attempts):
+            try:
+                return self.store.publish(snapshot)
+            except OSError as error:
+                last_error = error
+                if attempt + 1 < self.publish_attempts:
+                    self.sleep(self.retry_delay_seconds)
+        if last_error is None:
+            raise RuntimeError("progress publication retry loop did not execute")
+        raise last_error
 
 
 def _shared_publication_lock(bucket_id: str, prefix: str) -> threading.RLock:
@@ -972,6 +1000,8 @@ def _validate_track_transition(previous: ProgressTrack, current: ProgressTrack) 
         raise ValueError("progress track unit cannot change within a plan")
     if previous.total != current.total:
         raise ValueError("progress track total cannot change within a plan")
+    if previous.completed is not None and current.completed is None:
+        raise ValueError("progress track completed count cannot be removed")
     if (
         previous.completed is not None
         and current.completed is not None
@@ -993,6 +1023,13 @@ def _validate_publication(snapshot: ProgressSnapshot, latest: StoredProgress | N
         raise ValueError("progress sequence must increase by exactly one")
     if snapshot.previous != latest.reference:
         raise ValueError("progress predecessor does not match current snapshot")
+
+
+def _parse_progress_datetime(value: object, field_name: str) -> datetime:
+    text = _require_string(value, field_name)
+    if _PROGRESS_TIMESTAMP_RE.fullmatch(text) is None:
+        raise ValueError(f"{field_name} must be an RFC 3339 timestamp")
+    return parse_datetime(text, field_name)
 
 
 def _verify_progress_bytes(raw: bytes, reference: ArtifactRef) -> None:

@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   ObjectProgressStore,
   ProgressReporter,
+  TransientProgressError,
   parseProgressSnapshot,
   progressClaimKey,
   progressPointerKey,
@@ -12,7 +13,10 @@ import {
   type ProgressClaim,
   type ProgressInput,
   type ProgressObjectStore,
+  type ProgressSnapshot,
+  type ProgressStore,
   type ProgressTrack,
+  type StoredProgress,
 } from "../src/index.js";
 
 const input: ProgressInput = {
@@ -182,6 +186,33 @@ test("reporter restores progress for a replacement attempt", async () => {
   assert.equal(secondStored?.snapshot.attempt_id, "attempt-2");
 });
 
+test("reporter validates identifiers before storage access", async () => {
+  let loads = 0;
+  const store: ProgressStore = {
+    async loadLatest(): Promise<StoredProgress | null> {
+      loads += 1;
+      return null;
+    },
+    async loadReference(): Promise<ProgressSnapshot> {
+      throw new Error("unused");
+    },
+    async publish(): Promise<StoredProgress> {
+      throw new Error("unused");
+    },
+  };
+
+  await assert.rejects(
+    ProgressReporter.create({
+      runId: "../unsafe",
+      attemptId: "attempt-1",
+      input,
+      store,
+    }),
+    /safe identifier/u,
+  );
+  assert.equal(loads, 0);
+});
+
 test("terminal state is preserved after restart", async () => {
   const objects = new MemoryObjects();
   const store = new ObjectProgressStore(objects);
@@ -238,6 +269,34 @@ test("same plan rejects regression and a new plan resets counts", async () => {
   );
   reporter.update(track(0, "plan-2", 20));
   assert.deepEqual(reporter.tracks, [track(0, "plan-2", 20)]);
+});
+
+test("known completed count cannot be removed", async () => {
+  const reporter = await ProgressReporter.create({
+    runId: "run",
+    attemptId: "attempt-1",
+    input,
+    store: new ObjectProgressStore(new MemoryObjects()),
+  });
+  reporter.plan([
+    {
+      key: "items",
+      plan_id: "plan-1",
+      status: "running",
+      completed: 5,
+      unit: "items",
+    },
+  ]);
+  assert.throws(
+    () =>
+      reporter.update({
+        key: "items",
+        plan_id: "plan-1",
+        status: "running",
+        unit: "items",
+      }),
+    /cannot be removed/u,
+  );
 });
 
 test("pointer metadata must match its snapshot", async () => {
@@ -322,6 +381,37 @@ test("stable JSON sorts object keys", () => {
     Buffer.from(stableJsonBytes({ z: 1, a: { y: 2, b: 3 } })).toString("utf8"),
     '{\n  "a": {\n    "b": 3,\n    "y": 2\n  },\n  "z": 1\n}\n',
   );
+});
+
+test("reporter retries transient storage failure", async () => {
+  const backing = new ObjectProgressStore(new MemoryObjects());
+  let failures = 1;
+  const delays: number[] = [];
+  const store: ProgressStore = {
+    loadLatest: (runId) => backing.loadLatest(runId),
+    loadReference: (reference) => backing.loadReference(reference),
+    async publish(snapshot): Promise<StoredProgress> {
+      if (failures > 0) {
+        failures -= 1;
+        throw new TransientProgressError("temporary outage");
+      }
+      return backing.publish(snapshot);
+    },
+  };
+  const reporter = await ProgressReporter.create({
+    runId: "run",
+    attemptId: "attempt-1",
+    input,
+    store,
+    retryDelayMs: 250,
+    sleep: async (milliseconds) => {
+      delays.push(milliseconds);
+    },
+  });
+  reporter.plan([track(1)]);
+
+  assert.ok(await reporter.flush({ force: true }));
+  assert.deepEqual(delays, [250]);
 });
 
 test("object store detects corrupt immutable snapshot", async () => {

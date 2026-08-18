@@ -9,6 +9,13 @@ const RFC3339 =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u;
 const PUBLICATION_LOCKS = new Map<string, AsyncLock>();
 
+export class TransientProgressError extends Error {
+  constructor(message: string, options: ErrorOptions = {}) {
+    super(message, options);
+    this.name = "TransientProgressError";
+  }
+}
+
 export type ProgressStatus =
   | "pending"
   | "running"
@@ -313,7 +320,10 @@ export type ProgressReporterOptions = {
   input: ProgressInput;
   store: ProgressStore;
   flushIntervalMs?: number;
+  publishAttempts?: number;
+  retryDelayMs?: number;
   clock?: () => Date;
+  sleep?: (milliseconds: number) => Promise<void>;
 };
 
 export class ProgressReporter {
@@ -323,7 +333,10 @@ export class ProgressReporter {
   readonly #input: ProgressInput;
   readonly #store: ProgressStore;
   readonly #flushIntervalMs: number;
+  readonly #publishAttempts: number;
+  readonly #retryDelayMs: number;
   readonly #clock: () => Date;
+  readonly #sleep: (milliseconds: number) => Promise<void>;
   readonly #tracks = new Map<string, ProgressTrack>();
   #latest: StoredProgress | null;
   #sequence: number;
@@ -350,9 +363,20 @@ export class ProgressReporter {
     this.#attemptId = options.attemptId;
     this.#jobId = options.jobId;
     this.#input = { ...options.input };
+    const publishAttempts = options.publishAttempts ?? 3;
+    const retryDelayMs = options.retryDelayMs ?? 2_000;
+    if (!Number.isSafeInteger(publishAttempts) || publishAttempts < 1) {
+      throw new Error("publishAttempts must be an integer >= 1");
+    }
+    if (!Number.isFinite(retryDelayMs) || retryDelayMs < 0) {
+      throw new Error("retryDelayMs must be a nonnegative finite number");
+    }
     this.#store = options.store;
     this.#flushIntervalMs = flushIntervalMs;
+    this.#publishAttempts = publishAttempts;
+    this.#retryDelayMs = retryDelayMs;
     this.#clock = options.clock ?? (() => new Date());
+    this.#sleep = options.sleep ?? sleep;
     this.#latest = latest;
     this.#sequence = latest?.snapshot.sequence ?? 0;
     const sameInput =
@@ -376,6 +400,7 @@ export class ProgressReporter {
   static async create(
     options: ProgressReporterOptions,
   ): Promise<ProgressReporter> {
+    validateReporterOptions(options);
     return new ProgressReporter(
       options,
       await options.store.loadLatest(options.runId),
@@ -474,12 +499,30 @@ export class ProgressReporter {
       ...(this.#latest === null ? {} : { previous: this.#latest.reference }),
       tracks: this.tracks,
     });
-    const stored = await this.#store.publish(snapshot);
+    const stored = await this.#publishWithRetry(snapshot);
     this.#latest = stored;
     this.#sequence = snapshot.sequence;
     this.#lastFlushMs = now.getTime();
     if (this.#changeSequence === changeSequence) this.#dirty = false;
     return stored;
+  }
+
+  async #publishWithRetry(snapshot: ProgressSnapshot): Promise<StoredProgress> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < this.#publishAttempts; attempt += 1) {
+      try {
+        return await this.#store.publish(snapshot);
+      } catch (error) {
+        lastError = error;
+        if (!(error instanceof TransientProgressError)) throw error;
+        if (attempt + 1 < this.#publishAttempts) {
+          await this.#sleep(this.#retryDelayMs);
+        }
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("progress publication failed", { cause: lastError });
   }
 
   #markDirty(): void {
@@ -627,6 +670,30 @@ export function stableJsonBytes(value: unknown): Uint8Array {
   );
 }
 
+function validateReporterOptions(options: ProgressReporterOptions): void {
+  requireSafeId(options.runId, "runId");
+  requireSafeId(options.attemptId, "attemptId");
+  if (options.jobId !== undefined)
+    requireBoundedString(options.jobId, "jobId", 200);
+  validateInput(options.input);
+  const flushIntervalMs = options.flushIntervalMs ?? 30_000;
+  if (!Number.isFinite(flushIntervalMs) || flushIntervalMs < 0) {
+    throw new Error("flushIntervalMs must be a nonnegative finite number");
+  }
+  const publishAttempts = options.publishAttempts ?? 3;
+  if (!Number.isSafeInteger(publishAttempts) || publishAttempts < 1) {
+    throw new Error("publishAttempts must be an integer >= 1");
+  }
+  const retryDelayMs = options.retryDelayMs ?? 2_000;
+  if (!Number.isFinite(retryDelayMs) || retryDelayMs < 0) {
+    throw new Error("retryDelayMs must be a nonnegative finite number");
+  }
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 class AsyncLock {
   #tail: Promise<void> = Promise.resolve();
 
@@ -740,6 +807,9 @@ function validateTrackTransition(
     throw new Error("progress track unit cannot change within a plan");
   if (previous.total !== current.total)
     throw new Error("progress track total cannot change within a plan");
+  if (previous.completed !== undefined && current.completed === undefined) {
+    throw new Error("progress track completed count cannot be removed");
+  }
   if (
     previous.completed !== undefined &&
     current.completed !== undefined &&

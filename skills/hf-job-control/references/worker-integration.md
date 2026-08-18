@@ -536,9 +536,9 @@ moves. A replacement attempt restores the latest snapshot, recomputes counts
 from durable application state, and rejects progress ahead of that state.
 
 Python workers can use `HubBucketProgressStore`. TypeScript workers use the
-package's `ObjectProgressStore` with their existing authenticated Bucket IO.
-Standalone progress reporting does not require adopting lifecycle control in
-the same change.
+package's `ObjectProgressStore` with their existing authenticated Bucket IO and
+wrap retryable IO failures in `TransientProgressError`. Standalone progress
+reporting does not require adopting lifecycle control in the same change.
 
 Do not report in-flight requests as completed work. Do not calculate a finish
 time in the worker. Monitoring systems use successive snapshots from one fixed

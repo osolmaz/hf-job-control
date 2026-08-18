@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from hf_job_control.models import ArtifactRef, parse_json_object, stable_json_bytes
+from hf_job_control.models import (
+    MAX_SAFE_INTEGER,
+    ArtifactRef,
+    parse_json_object,
+    stable_json_bytes,
+)
 from hf_job_control.progress import (
     HubBucketProgressStore,
     LocalProgressStore,
@@ -20,6 +25,7 @@ from hf_job_control.progress import (
     ProgressSnapshot,
     ProgressStatus,
     ProgressTrack,
+    StoredProgress,
     progress_claim_key,
 )
 
@@ -53,6 +59,21 @@ def test_cross_language_fixture_is_canonical() -> None:
     assert stable_json_bytes(snapshot.to_dict()) == raw
 
 
+def test_progress_snapshot_rejects_non_rfc3339_timestamp() -> None:
+    value = {
+        "schema_version": 1,
+        "run_id": "run",
+        "attempt_id": "attempt-1",
+        "sequence": 1,
+        "updated_at": "2026-08-18 12:00:00Z",
+        "input": INPUT.to_dict(),
+        "state": "running",
+        "tracks": [track(1).to_dict()],
+    }
+    with pytest.raises(ValueError, match="RFC 3339"):
+        ProgressSnapshot.from_dict(value)
+
+
 def test_progress_snapshot_round_trip() -> None:
     snapshot = ProgressSnapshot(
         run_id="run",
@@ -80,6 +101,8 @@ def test_progress_track_requires_consistent_counts() -> None:
         track(11)
     with pytest.raises(ValueError, match="must reach"):
         track(9, status=ProgressStatus.COMPLETED)
+    with pytest.raises(ValueError, match="JavaScript-safe"):
+        track(MAX_SAFE_INTEGER + 1, total=MAX_SAFE_INTEGER + 1)
 
 
 def test_reporter_publishes_ordered_snapshots_and_throttles() -> None:
@@ -130,6 +153,37 @@ def test_reporter_rejects_regression_but_accepts_new_plan() -> None:
 
     reporter.update(track(0, plan_id="plan-2", total=20))
     assert reporter.tracks == (track(0, plan_id="plan-2", total=20),)
+
+
+def test_known_completed_count_cannot_be_removed() -> None:
+    store = MemoryProgressStore()
+    reporter = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    reporter.plan(
+        [
+            ProgressTrack(
+                key="items",
+                plan_id="plan-1",
+                status=ProgressStatus.RUNNING,
+                completed=5,
+                unit="items",
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="cannot be removed"):
+        reporter.update(
+            ProgressTrack(
+                key="items",
+                plan_id="plan-1",
+                status=ProgressStatus.RUNNING,
+                unit="items",
+            )
+        )
 
 
 def test_competing_reporters_cannot_overwrite_the_same_sequence() -> None:
@@ -408,6 +462,36 @@ def test_hub_bucket_store_round_trip() -> None:
     stored = reporter.flush(force=True)
     assert stored is not None
     assert store.load_latest("run") == stored
+
+
+def test_reporter_retries_transient_store_failure() -> None:
+    class FlakyStore(MemoryProgressStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures = 1
+
+        def publish(self, snapshot: ProgressSnapshot) -> StoredProgress:
+            if self.failures > 0:
+                self.failures -= 1
+                raise OSError("temporary outage")
+            return super().publish(snapshot)
+
+    store = FlakyStore()
+    delays: list[float] = []
+    reporter = ProgressReporter(
+        run_id="run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        retry_delay_seconds=0.25,
+        clock=lambda: NOW,
+        sleep=delays.append,
+    )
+    reporter.plan([track(1)])
+
+    stored = reporter.flush(force=True)
+    assert stored is not None
+    assert delays == [0.25]
 
 
 def test_reference_bucket_must_match_store() -> None:
