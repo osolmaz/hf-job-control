@@ -27,6 +27,7 @@ from hf_job_control.progress import (
     ProgressTrack,
     StoredProgress,
     progress_claim_key,
+    progress_claim_prefix,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -103,6 +104,10 @@ def test_progress_track_requires_consistent_counts() -> None:
         track(9, status=ProgressStatus.COMPLETED)
     with pytest.raises(ValueError, match="JavaScript-safe"):
         track(MAX_SAFE_INTEGER + 1, total=MAX_SAFE_INTEGER + 1)
+    with pytest.raises(ValueError, match="JavaScript-safe"):
+        track(1.5, total=2)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="JavaScript-safe"):
+        track(True, total=2)
 
 
 def test_reporter_publishes_ordered_snapshots_and_throttles() -> None:
@@ -399,6 +404,26 @@ def test_competing_sequence_claims_are_rejected() -> None:
     store.claims[progress_claim_key("", competing)] = stable_json_bytes(competing.to_dict())
 
     with pytest.raises(RuntimeError, match="competing progress sequence claims"):
+        store.load_latest("run")
+
+
+def test_orphan_claim_must_match_requested_run() -> None:
+    store = MemoryProgressStore()
+    reporter = ProgressReporter(
+        run_id="other-run",
+        attempt_id="attempt-1",
+        input=INPUT,
+        store=store,
+        clock=lambda: NOW,
+    )
+    reporter.plan([track(1)])
+    stored = reporter.flush(force=True)
+    assert stored is not None
+    other_claim_key = next(iter(store.claims))
+    misplaced_key = f"{progress_claim_prefix('', 'run', 1)}/attempt-1.json"
+    store.claims[misplaced_key] = store.claims[other_claim_key]
+
+    with pytest.raises(ValueError, match="claim run_id mismatch"):
         store.load_latest("run")
 
 
