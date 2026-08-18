@@ -6,6 +6,9 @@ Run these commands before finishing a change:
 
 ```bash
 uv sync --all-groups
+npm ci
+npm run check
+npm audit
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy
@@ -19,6 +22,12 @@ npx -y @simpledoc/simpledoc check
 
 Keep `slophammer.yml` and `.github/workflows/ci.yml` aligned with the
 [Slophammer Python entrypoint](https://github.com/osolmaz/slophammer/blob/main/docs/AGENT_ENTRYPOINT.md).
+
+## TypeScript
+
+- Keep the TypeScript package strict and aligned with the Python progress models.
+- Add shared fixtures when a wire-format change affects both languages.
+- Avoid `any`, unchecked casts, and unvalidated external input.
 
 ## Python
 

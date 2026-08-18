@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/progress-v1.schema.json",
+  "title": "HF Job Control progress snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "attempt_id", "sequence", "updated_at",
+    "input", "state", "tracks"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"$ref": "#/$defs/safe_id"},
+    "attempt_id": {"$ref": "#/$defs/safe_id"},
+    "job_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "sequence": {"type": "integer", "minimum": 1},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "input": {"$ref": "#/$defs/input"},
+    "state": {
+      "enum": [
+        "pending", "running", "waiting", "blocked", "completed", "failed",
+        "cancelled"
+      ]
+    },
+    "previous": {"$ref": "#/$defs/artifact"},
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/track"}
+    }
+  },
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "contract_sha256"],
+      "properties": {
+        "revision": {"type": "string", "minLength": 1, "maxLength": 200},
+        "contract_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "plan_id", "status"],
+      "properties": {
+        "key": {"$ref": "#/$defs/safe_id"},
+        "plan_id": {"$ref": "#/$defs/safe_id"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "status": {
+          "enum": [
+            "pending", "running", "waiting", "blocked", "completed", "failed",
+            "cancelled"
+          ]
+        },
+        "completed": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0},
+        "unit": {"type": "string", "minLength": 1, "maxLength": 64},
+        "source_updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "key", "sha256", "bytes"],
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "key": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

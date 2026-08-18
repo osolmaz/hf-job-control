@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+node_modules/
 build/
 dist/
 *.egg-info/

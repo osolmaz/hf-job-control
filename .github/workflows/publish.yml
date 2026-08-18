@@ -37,6 +37,7 @@ jobs:
           git fetch --no-tags origin main --depth=1
 
           uv run --python 3.13 --no-project python - <<'PY'
+          import json
           import os
           import re
           import subprocess
@@ -51,6 +52,12 @@ jobs:
               )
 
           version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          package_version = json.loads(Path("package.json").read_text())["version"]
+          if package_version != version:
+              sys.exit(
+                  f"package.json version {package_version} does not match "
+                  f"pyproject.toml version {version}."
+              )
           expected = f"v{version}"
           if release_tag != expected:
               sys.exit(
@@ -108,6 +115,12 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Validate TypeScript package
+        run: |
+          npm ci
+          npm run check
+          npm audit
+
       - name: Validate documentation
         run: npx -y @simpledoc/simpledoc check
 
@@ -139,6 +152,8 @@ jobs:
               "references/schemas/checkpoint-manifest-v1.schema.json",
               "references/schemas/control-v1.schema.json",
               "references/schemas/launch-spec-v1.schema.json",
+              "references/schemas/progress-pointer-v1.schema.json",
+              "references/schemas/progress-v1.schema.json",
               "references/schemas/run-status-v1.schema.json",
           }
 

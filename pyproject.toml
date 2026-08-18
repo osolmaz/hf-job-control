@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hf-job-control"
-version = "0.2.0"
-description = "Cooperative pause, stop, and resume control for detached Hugging Face Jobs"
+version = "0.3.0"
+description = "Cooperative lifecycle control and durable progress for detached Hugging Face Jobs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Onur Solmaz", email = "onur@solmaz.io" }]
 dependencies = ["huggingface-hub>=1.2,<2", "skillflag>=0.1,<0.2"]
-keywords = ["hugging-face", "jobs", "checkpoint", "resume", "cli"]
+keywords = ["hugging-face", "jobs", "checkpoint", "resume", "progress", "cli"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
@@ -94,6 +94,7 @@ source_paths = [
 ]
 also_copy = [
   "package.json",
+  "fixtures/",
   "schemas/",
   "skills/",
   "src/hf_job_control/__init__.py",
@@ -102,6 +103,7 @@ also_copy = [
   "src/hf_job_control/launch.py",
   "src/hf_job_control/metrics.py",
   "src/hf_job_control/models.py",
+  "src/hf_job_control/progress.py",
   "src/hf_job_control/py.typed",
   "src/hf_job_control/stores.py",
 ]

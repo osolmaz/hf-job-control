@@ -37,6 +37,8 @@ REQUIRED_SCHEMAS = {
     "checkpoint-manifest-v1.schema.json",
     "control-v1.schema.json",
     "launch-spec-v1.schema.json",
+    "progress-pointer-v1.schema.json",
+    "progress-v1.schema.json",
     "run-status-v1.schema.json",
 }
 

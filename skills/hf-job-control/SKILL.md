@@ -1,6 +1,6 @@
 ---
 name: hf-job-control
-description: Operate and integrate cooperative lifecycle control for detached Hugging Face Jobs with the hf-job-control Python package and CLI, including audits and incident recovery. Use when creating logical runs, registering immutable launch specifications, launching or monitoring physical Jobs, requesting pause/stop/abort, resuming from verified checkpoints, implementing CheckpointAdapter and Controller boundaries, running the remote canary, investigating control or checkpoint failures, or proving receipts and provenance for a completed run.
+description: Operate and integrate cooperative lifecycle control and durable progress for detached Hugging Face Jobs with the hf-job-control Python and TypeScript packages, including audits and incident recovery. Use when creating logical runs, publishing exact progress, registering immutable launch specifications, launching or monitoring physical Jobs, requesting pause/stop/abort, resuming from verified checkpoints, implementing worker boundaries, running the remote canary, investigating failures, or proving receipts and provenance.
 license: MIT
 compatibility: Requires Python 3.11+, an authenticated Hugging Face account, and the hf-job-control CLI. Automatic run-ID generation also requires Node.js 22+ and npx.
 metadata:
@@ -29,7 +29,7 @@ Identify the role before acting. Load the matching reference completely.
 | Task | Required reference |
 |---|---|
 | Create, launch, inspect, pause, resume, stop, abort, or verify a run | [Operator workflows](references/operator-workflows.md) |
-| Add control to a worker or review a checkpoint adapter | [Worker integration](references/worker-integration.md) |
+| Add control or durable progress to a worker | [Worker integration](references/worker-integration.md) |
 | Interpret JSON documents, repository paths, identities, states, or generations | [Protocol and storage](references/protocol-and-storage.md) |
 | Diagnose a stuck, failed, stale, conflicting, or interrupted run | [Operations runbook](references/operations-runbook.md) |
 | Approve a launch, action, resume, or completion | [Verification checklists](references/verification-checklists.md) |

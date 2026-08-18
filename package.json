@@ -1,8 +1,9 @@
 {
-  "name": "hf-job-control-agent-skill",
-  "version": "0.2.0",
+  "name": "@osolmaz/hf-job-control",
+  "version": "0.3.0",
   "private": true,
-  "description": "Agent skill bundled with HF Job Control",
+  "type": "module",
+  "description": "Cooperative control and durable progress for Hugging Face Jobs",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -12,8 +13,36 @@
     "pi-package",
     "agent-skill",
     "hugging-face",
-    "job-control"
+    "job-control",
+    "progress"
   ],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "schemas",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "format": "prettier --check package.json tsconfig.json typescript",
+    "format:write": "prettier --write package.json tsconfig.json typescript",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "check": "npm run format && npm test",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.11",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.3"
+  },
   "pi": {
     "skills": [
       "./skills/hf-job-control"

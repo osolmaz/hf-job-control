@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,12 @@ from hf_job_control.models import (
     PublishedDocument,
     ResumeMode,
     RunState,
+)
+from hf_job_control.progress import (
+    ProgressInput,
+    ProgressSnapshot,
+    ProgressStatus,
+    ProgressTrack,
 )
 from hf_job_control.stores import (
     LocalArtifactStore,
@@ -193,6 +200,49 @@ def test_metric_sink_failure_does_not_break_control(tmp_path: Path) -> None:
     assert status is not None
     assert status.metrics == {"loss": 0.5}
     assert status.message == "metric sink failed: wandb offline"
+
+
+def test_boundary_publishes_typed_progress(tmp_path: Path) -> None:
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    publish(controls, "run", 1, Action.RUN)
+    worker = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=LocalArtifactStore(tmp_path),
+    )
+    adapter = CounterAdapter()
+    worker.start(adapter)
+    progress = ProgressSnapshot(
+        run_id="run",
+        attempt_id="attempt-1",
+        sequence=1,
+        updated_at=datetime.now(UTC),
+        input=ProgressInput(revision="a" * 40, contract_sha256="b" * 64),
+        state=ProgressStatus.RUNNING,
+        tracks=(
+            ProgressTrack(
+                key="items",
+                plan_id="plan-1",
+                status=ProgressStatus.RUNNING,
+                completed=1,
+                total=2,
+                unit="items",
+            ),
+        ),
+    )
+
+    decision = worker.boundary(
+        boundary=Boundary(name="counter", sequence=1),
+        adapter=adapter,
+        progress=progress,
+    )
+
+    assert not decision.should_exit
+    status = statuses.fetch_status("run")
+    assert status is not None
+    assert status.progress == progress
 
 
 def test_repeated_run_generation_is_idempotent(tmp_path: Path) -> None:

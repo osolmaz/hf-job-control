@@ -1,8 +1,9 @@
 # HF Job Control
 
-HF Job Control is a Python library and CLI for cooperative control of detached
-Hugging Face Jobs. A running job saves its work at a safe boundary before it
-responds to `run`, `pause`, `stop`, or `abort`.
+HF Job Control provides Python and TypeScript libraries plus an operator CLI
+for detached Hugging Face Jobs. A running Job can publish durable progress and
+save its work at a safe boundary before it responds to `run`, `pause`, `stop`,
+or `abort`.
 
 The control history stays in a versioned Hugging Face dataset. Checkpoints use
 content-addressed keys in a Hugging Face Bucket, while a separate dataset stores
@@ -170,11 +171,33 @@ For PyTorch training, an exact adapter normally includes model parameters,
 optimizer and scheduler state, mixed-precision state, random-number generator
 state, data order, global step, and model-selection counters.
 
+## Progress reporting
+
+Python and TypeScript workers can publish exact committed progress without
+using the full lifecycle controller. Each application defines its phases and
+counts. HF Job Control validates the tracks, prevents regression, and writes
+content-addressed snapshots to the application's existing Bucket.
+
+Python workers use `ProgressReporter` with `HubBucketProgressStore`. TypeScript
+workers install this repository from a pinned tag or commit and use
+`ProgressReporter` with `ObjectProgressStore` plus their existing Bucket IO.
+Both implementations use the same `progress-v1` format.
+
+A worker fixes a `plan_id`, total, and unit before reporting a measurable phase.
+Changing the input or denominator starts a new plan instead of moving a counter
+backward. Workers report committed output only and flush at safe boundaries.
+Monitoring systems calculate rates and finish-time ranges from the immutable
+snapshot chain.
+
+See the [progress reporting plan](docs/2026-08-18-progress-reporting-plan.md)
+for storage, recovery, and application integration rules.
+
 ## Monitoring
 
 `hf-job-control watch` reads durable project status. W&B can receive the same
 metrics through `WandbMetricSink`, but W&B is optional and never controls
-checkpoint or resume state.
+checkpoint or resume state. The optional typed `progress` field carries the
+latest validated progress snapshot separately from scientific metrics.
 
 ## Safety
 

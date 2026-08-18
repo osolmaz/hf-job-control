@@ -9,7 +9,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from hf_job_control.progress import ProgressSnapshot
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -528,6 +531,7 @@ class RunStatus:
     boundary: Boundary | None = None
     checkpoint: ArtifactRef | None = None
     metrics: JsonObject = field(default_factory=dict)
+    progress: ProgressSnapshot | None = None
     message: str | None = None
     schema_version: int = SCHEMA_VERSION
 
@@ -562,6 +566,8 @@ class RunStatus:
             result["checkpoint"] = self.checkpoint.to_dict()
         if self.metrics:
             result["metrics"] = self.metrics
+        if self.progress is not None:
+            result["progress"] = self.progress.to_dict()
         if self.message is not None:
             result["message"] = self.message
         return result
@@ -581,6 +587,7 @@ class RunStatus:
             "boundary",
             "checkpoint",
             "metrics",
+            "progress",
             "message",
         }
         required = {
@@ -595,6 +602,10 @@ class RunStatus:
         _require_fields(data, required=required, allowed=allowed)
         boundary = data.get("boundary")
         checkpoint = data.get("checkpoint")
+        progress = data.get("progress")
+        if progress is not None:
+            from hf_job_control.progress import ProgressSnapshot
+
         return cls(
             schema_version=_require_int(data["schema_version"], "schema_version", 1),
             run_id=_require_string(data["run_id"], "run_id"),
@@ -611,6 +622,7 @@ class RunStatus:
             metrics=(
                 {} if data.get("metrics") is None else _require_object(data["metrics"], "metrics")
             ),
+            progress=None if progress is None else ProgressSnapshot.from_dict(progress),
             message=_optional_string(data, "message"),
         )
 

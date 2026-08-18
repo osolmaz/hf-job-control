@@ -1,0 +1,25 @@
+{
+  "attempt_id": "attempt-1",
+  "input": {
+    "contract_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "job_id": "job-1",
+  "run_id": "run",
+  "schema_version": 1,
+  "sequence": 1,
+  "state": "running",
+  "tracks": [
+    {
+      "completed": 4,
+      "key": "items",
+      "label": "Items",
+      "plan_id": "plan-1",
+      "source_updated_at": "2026-08-18T12:00:00Z",
+      "status": "running",
+      "total": 10,
+      "unit": "items"
+    }
+  ],
+  "updated_at": "2026-08-18T12:00:00Z"
+}
