@@ -61,6 +61,23 @@ test("cross-language fixture is canonical", async () => {
   assert.deepEqual(stableJsonBytes(snapshot), raw);
 });
 
+test("snapshot validation rejects invalid calendar timestamps", () => {
+  assert.throws(
+    () =>
+      parseProgressSnapshot({
+        schema_version: 1,
+        run_id: "run",
+        attempt_id: "attempt-1",
+        sequence: 1,
+        updated_at: "2026-02-30T00:00:00Z",
+        input,
+        state: "running",
+        tracks: [track(1)],
+      }),
+    /RFC 3339/u,
+  );
+});
+
 test("snapshot validation rejects regression-shaped counts", () => {
   assert.throws(
     () =>
