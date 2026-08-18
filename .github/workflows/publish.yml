@@ -119,6 +119,7 @@ jobs:
         run: |
           npm ci
           npm run check
+          git diff --exit-code -- typescript-dist/src
           npm audit
 
       - name: Validate documentation

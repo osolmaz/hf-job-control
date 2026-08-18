@@ -1,6 +1,6 @@
 {
   "name": "@osolmaz/hf-job-control",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "Cooperative control and durable progress for Hugging Face Jobs",
