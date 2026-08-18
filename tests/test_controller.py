@@ -244,6 +244,14 @@ def test_boundary_publishes_typed_progress(tmp_path: Path) -> None:
     assert status is not None
     assert status.progress == progress
 
+    worker.boundary(
+        boundary=Boundary(name="counter", sequence=2),
+        adapter=adapter,
+    )
+    retained = statuses.fetch_status("run")
+    assert retained is not None
+    assert retained.progress == progress
+
 
 def test_boundary_rejects_progress_for_another_run(tmp_path: Path) -> None:
     controls = MemoryControlStore()

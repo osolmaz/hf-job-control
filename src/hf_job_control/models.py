@@ -19,6 +19,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 SCHEMA_VERSION = 1
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -200,8 +201,8 @@ class ArtifactRef:
             raise ValueError("sha256 must be 64 lowercase hex characters")
         if f"sha256-{self.sha256}" not in parts:
             raise ValueError("key must contain a sha256-<digest> segment")
-        if self.bytes < 1:
-            raise ValueError("bytes must be positive")
+        if self.bytes < 1 or self.bytes > MAX_SAFE_INTEGER:
+            raise ValueError("bytes must be a positive JavaScript-safe integer")
 
     def to_dict(self) -> JsonObject:
         return {"bucket": self.bucket, "bytes": self.bytes, "key": self.key, "sha256": self.sha256}

@@ -1,15 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/progress-pointer-v1.schema.json",
-  "title": "HF Job Control progress pointer v1",
+  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/progress-claim-v1.schema.json",
+  "title": "HF Job Control progress sequence claim v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "sequence", "updated_at", "snapshot"],
+  "required": [
+    "schema_version", "run_id", "attempt_id", "sequence", "created_at", "snapshot"
+  ],
   "properties": {
     "schema_version": {"const": 1},
     "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "attempt_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
     "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
-    "updated_at": {"type": "string", "format": "date-time"},
+    "created_at": {"type": "string", "format": "date-time"},
     "snapshot": {
       "type": "object",
       "additionalProperties": false,

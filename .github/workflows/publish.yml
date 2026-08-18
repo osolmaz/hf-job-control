@@ -152,6 +152,7 @@ jobs:
               "references/schemas/checkpoint-manifest-v1.schema.json",
               "references/schemas/control-v1.schema.json",
               "references/schemas/launch-spec-v1.schema.json",
+              "references/schemas/progress-claim-v1.schema.json",
               "references/schemas/progress-pointer-v1.schema.json",
               "references/schemas/progress-v1.schema.json",
               "references/schemas/run-status-v1.schema.json",

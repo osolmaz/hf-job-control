@@ -16,6 +16,7 @@ The skill carries matching copies for
 [control](schemas/control-v1.schema.json),
 [launch specifications](schemas/launch-spec-v1.schema.json),
 [status](schemas/run-status-v1.schema.json),
+[progress claims](schemas/progress-claim-v1.schema.json),
 [progress](schemas/progress-v1.schema.json),
 [progress pointers](schemas/progress-pointer-v1.schema.json),
 [receipts](schemas/applied-control-v1.schema.json), and
@@ -493,8 +494,10 @@ pointer follows
 Each snapshot identifies the logical run, physical attempt, exact input,
 producer contract, ordered sequence, and independent progress tracks.
 
-The reporter uploads and verifies the immutable snapshot before replacing the
-pointer. A replacement attempt restores the pointer and reconciles its counts
+The reporter uploads and verifies the immutable snapshot and an immutable
+sequence claim before replacing the pointer. Competing claims stop publication
+instead of allowing last-writer-wins data loss. A replacement attempt restores
+the pointer and reconciles its counts
 with committed application output. Counts cannot move backward within one
 `plan_id`; a changed input, denominator, unit, or method uses a new plan.
 

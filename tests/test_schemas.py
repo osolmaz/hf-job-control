@@ -21,6 +21,7 @@ from hf_job_control.models import (
     RunStatus,
 )
 from hf_job_control.progress import (
+    ProgressClaim,
     ProgressInput,
     ProgressPointer,
     ProgressSnapshot,
@@ -74,6 +75,16 @@ def test_progress_schemas_match_models() -> None:
         key=f"runs/run/snapshots/sha256-{'c' * 64}/progress.json",
         sha256="c" * 64,
         bytes=10,
+    )
+    validate(
+        "progress-claim-v1.schema.json",
+        ProgressClaim(
+            run_id="run",
+            attempt_id="attempt-1",
+            sequence=1,
+            created_at=now,
+            snapshot=reference,
+        ).to_dict(),
     )
     validate(
         "progress-pointer-v1.schema.json",

@@ -13,7 +13,7 @@
     "run_id": {"$ref": "#/$defs/safe_id"},
     "attempt_id": {"$ref": "#/$defs/safe_id"},
     "job_id": {"type": "string", "minLength": 1, "maxLength": 200},
-    "sequence": {"type": "integer", "minimum": 1},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
     "updated_at": {"type": "string", "format": "date-time"},
     "input": {"$ref": "#/$defs/input"},
     "state": {
@@ -58,8 +58,8 @@
             "cancelled"
           ]
         },
-        "completed": {"type": "integer", "minimum": 0},
-        "total": {"type": "integer", "minimum": 0},
+        "completed": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "total": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "unit": {"type": "string", "minLength": 1, "maxLength": 64},
         "source_updated_at": {"type": "string", "format": "date-time"}
       }
@@ -75,7 +75,7 @@
         },
         "key": {"type": "string", "minLength": 1, "maxLength": 1024},
         "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "bytes": {"type": "integer", "minimum": 1}
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
       }
     }
   }

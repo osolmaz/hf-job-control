@@ -182,7 +182,8 @@ Each application writes to its existing Bucket:
 
 ```text
 operations/<run-id>/progress/current.json
-operations/<run-id>/progress/snapshots/<sha256>.json
+operations/<run-id>/progress/claims/sequence-<sequence>/<attempt-id>.json
+operations/<run-id>/progress/snapshots/sha256-<sha256>/progress.json
 ```
 
 A snapshot is immutable and content-addressed. `current.json` atomically points
@@ -200,9 +201,13 @@ Progress storage follows this order:
 2. Create and validate the next progress snapshot.
 3. Upload the immutable snapshot.
 4. Verify its remote size and SHA-256.
-5. Replace `current.json` atomically.
+5. Publish an immutable claim for the next sequence.
+6. Reject competing claims for that sequence.
+7. Replace `current.json` and verify its exact bytes.
 
-A pointer must never reference an unverified snapshot.
+A pointer must never reference an unverified snapshot. Immutable claims make
+concurrent writers visible and let a replacement worker recover a snapshot that
+was committed before a pointer write was interrupted.
 
 ## Library interfaces
 
