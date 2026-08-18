@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hf-job-control"
-version = "0.3.1"
+version = "0.3.2"
 description = "Cooperative lifecycle control and durable progress for detached Hugging Face Jobs"
 readme = "README.md"
 requires-python = ">=3.11"
