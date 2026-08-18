@@ -6,7 +6,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const REPO_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const RFC3339 =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u;
 const PUBLICATION_LOCKS = new Map<string, AsyncLock>();
 
 export type ProgressStatus =
@@ -956,10 +956,46 @@ function requireInteger(value: unknown, name: string, minimum: number): number {
 
 function requireTimestamp(value: unknown, name: string): string {
   const result = requireString(value, name);
-  if (!RFC3339.test(result) || !Number.isFinite(Date.parse(result))) {
+  const match = RFC3339.exec(result);
+  if (match === null || !Number.isFinite(Date.parse(result))) {
+    throw new Error(`${name} must be an RFC 3339 timestamp`);
+  }
+  const year = timestampPart(match, 1, name);
+  const month = timestampPart(match, 2, name);
+  const day = timestampPart(match, 3, name);
+  const hour = timestampPart(match, 4, name);
+  const minute = timestampPart(match, 5, name);
+  const second = timestampPart(match, 6, name);
+  const offsetHour = match[7] === undefined ? 0 : timestampPart(match, 7, name);
+  const offsetMinute =
+    match[8] === undefined ? 0 : timestampPart(match, 8, name);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
     throw new Error(`${name} must be an RFC 3339 timestamp`);
   }
   return result;
+}
+
+function timestampPart(
+  match: RegExpExecArray,
+  index: number,
+  name: string,
+): number {
+  const value = match[index];
+  if (value === undefined)
+    throw new Error(`${name} must be an RFC 3339 timestamp`);
+  return Number(value);
 }
 
 function requireProgressStatus(value: unknown, name: string): ProgressStatus {
