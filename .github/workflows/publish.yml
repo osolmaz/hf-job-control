@@ -125,7 +125,9 @@ jobs:
         run: npx -y @simpledoc/simpledoc check
 
       - name: Build distributions
-        run: uv build
+        run: |
+          rm -rf dist
+          uv build
 
       - name: Check distributions
         run: |
