@@ -190,8 +190,7 @@ class ProgressSnapshot:
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
         validate_job_id(self.job_id)
-        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
-            raise ValueError("sequence must be a positive JavaScript-safe integer")
+        _validate_safe_integer(self.sequence, "sequence", 1)
         if self.updated_at.tzinfo is None:
             raise ValueError("updated_at must be timezone-aware")
         if not self.tracks or len(self.tracks) > MAX_TRACKS:
@@ -282,8 +281,7 @@ class ProgressPointer:
         if self.schema_version != PROGRESS_SCHEMA_VERSION:
             raise ValueError(f"schema_version must be {PROGRESS_SCHEMA_VERSION}")
         validate_run_id(self.run_id)
-        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
-            raise ValueError("sequence must be a positive JavaScript-safe integer")
+        _validate_safe_integer(self.sequence, "sequence", 1)
         if self.updated_at.tzinfo is None:
             raise ValueError("updated_at must be timezone-aware")
 
@@ -326,8 +324,7 @@ class ProgressClaim:
             raise ValueError(f"schema_version must be {PROGRESS_SCHEMA_VERSION}")
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
-        if self.sequence < 1 or self.sequence > MAX_SAFE_INTEGER:
-            raise ValueError("sequence must be a positive JavaScript-safe integer")
+        _validate_safe_integer(self.sequence, "sequence", 1)
         if self.created_at.tzinfo is None:
             raise ValueError("created_at must be timezone-aware")
 
@@ -414,8 +411,7 @@ def progress_claim_prefix(prefix: str, run_id: str, sequence: int) -> str:
     """Return the immutable-claim directory for one sequence."""
 
     validate_run_id(run_id)
-    if sequence < 1 or sequence > MAX_SAFE_INTEGER:
-        raise ValueError("sequence must be a positive JavaScript-safe integer")
+    _validate_safe_integer(sequence, "sequence", 1)
     root = _normalized_prefix(prefix)
     return _join_key(
         root,
@@ -933,7 +929,11 @@ def _reconcile_latest(
         if not claims:
             return current
         claim = _require_single_claim(claims)
+        if claim.run_id != run_id:
+            raise ValueError("progress claim run_id mismatch")
         child = StoredProgress(load(claim.snapshot), claim.snapshot)
+        if child.snapshot.run_id != run_id:
+            raise ValueError("progress claim snapshot run_id mismatch")
         _validate_claim(claim, child)
         _validate_publication(child.snapshot, current)
         pointer = ProgressPointer(
@@ -970,11 +970,22 @@ def _prepare_publication(
     return raw, reference, pointer
 
 
+def _validate_safe_integer(value: object, name: str, minimum: int) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or value > MAX_SAFE_INTEGER
+    ):
+        qualifier = "positive" if minimum == 1 else "nonnegative"
+        raise ValueError(f"{name} must be a {qualifier} JavaScript-safe integer")
+
+
 def _validate_track_counts(track: ProgressTrack) -> None:
-    if track.completed is not None and not 0 <= track.completed <= MAX_SAFE_INTEGER:
-        raise ValueError("completed must be a nonnegative JavaScript-safe integer")
-    if track.total is not None and not 0 <= track.total <= MAX_SAFE_INTEGER:
-        raise ValueError("total must be a nonnegative JavaScript-safe integer")
+    if track.completed is not None:
+        _validate_safe_integer(track.completed, "completed", 0)
+    if track.total is not None:
+        _validate_safe_integer(track.total, "total", 0)
     if track.total is not None and track.completed is None:
         raise ValueError("completed is required when total is set")
     if track.completed is not None and track.unit is None:

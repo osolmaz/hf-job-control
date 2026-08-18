@@ -269,10 +269,16 @@ export class ObjectProgressStore implements ProgressStore {
       const claims = await this.#loadClaims(runId, sequence);
       if (claims.length === 0) return current;
       const claim = requireSingleClaim(claims);
+      if (claim.run_id !== runId) {
+        throw new Error("progress claim run_id mismatch");
+      }
       const child: StoredProgress = {
         snapshot: await this.loadReference(claim.snapshot),
         reference: claim.snapshot,
       };
+      if (child.snapshot.run_id !== runId) {
+        throw new Error("progress claim snapshot run_id mismatch");
+      }
       validateClaim(claim, child);
       validatePublication(child.snapshot, current);
       await this.#writePointer({

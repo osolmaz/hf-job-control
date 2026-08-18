@@ -201,7 +201,12 @@ class ArtifactRef:
             raise ValueError("sha256 must be 64 lowercase hex characters")
         if f"sha256-{self.sha256}" not in parts:
             raise ValueError("key must contain a sha256-<digest> segment")
-        if self.bytes < 1 or self.bytes > MAX_SAFE_INTEGER:
+        if (
+            isinstance(self.bytes, bool)
+            or not isinstance(self.bytes, int)
+            or self.bytes < 1
+            or self.bytes > MAX_SAFE_INTEGER
+        ):
             raise ValueError("bytes must be a positive JavaScript-safe integer")
 
     def to_dict(self) -> JsonObject:

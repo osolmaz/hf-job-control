@@ -8,6 +8,7 @@ import {
   TransientProgressError,
   parseProgressSnapshot,
   progressClaimKey,
+  progressClaimPrefix,
   progressPointerKey,
   stableJsonBytes,
   type ProgressClaim,
@@ -374,6 +375,30 @@ test("competing sequence claims are rejected", async () => {
     store.loadLatest("run"),
     /competing progress sequence claims/u,
   );
+});
+
+test("orphan claim must match the requested run", async () => {
+  const objects = new MemoryObjects();
+  const store = new ObjectProgressStore(objects);
+  const reporter = await ProgressReporter.create({
+    runId: "other-run",
+    attemptId: "attempt-1",
+    input,
+    store,
+    clock: () => new Date("2026-08-18T12:00:00Z"),
+  });
+  reporter.plan([track(1)]);
+  assert.ok(await reporter.flush({ force: true }));
+  const otherClaim = [...objects.files.entries()].find(([key]) =>
+    key.includes("/claims/"),
+  );
+  assert.ok(otherClaim);
+  await objects.write(
+    `${progressClaimPrefix("", "run", 1)}/attempt-1.json`,
+    otherClaim[1],
+  );
+
+  await assert.rejects(store.loadLatest("run"), /claim run_id mismatch/u);
 });
 
 test("stable JSON sorts object keys", () => {
