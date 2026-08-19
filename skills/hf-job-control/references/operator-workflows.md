@@ -7,7 +7,7 @@ tags: [hugging-face, jobs, operations, checkpoints]
 
 # Operator workflows
 
-This guide covers the current `hf-job-control` v0.1 CLI. Check the installed
+This guide covers the current `hf-job-control` CLI. Check the installed
 command before acting because a checked-out repository, a worker image, and the
 operator machine may contain different package revisions.
 
@@ -344,8 +344,8 @@ retry pause against the same adapter.
 ## Checkpoint verification
 
 `verify` reads latest status, downloads its checkpoint from the configured
-Bucket, checks outer digest and byte count, validates the two-entry ZIP, and
-parses the inner manifest.
+Bucket, checks outer digest and byte count, validates the deterministic
+container, and parses the inner manifest plus all payload references.
 
 ```bash
 hf-job-control verify \
@@ -353,7 +353,7 @@ hf-job-control verify \
   "$RUN_ID" | tee verified-checkpoint.json
 
 jq -e '.verified == true' verified-checkpoint.json
-jq '.manifest | {run_id, attempt_id, adapter, boundary, payload_sha256, payload_bytes}' \
+jq '.manifest | {run_id, attempt_id, plan_sha256, adapter, boundary, payloads}' \
   verified-checkpoint.json
 ```
 

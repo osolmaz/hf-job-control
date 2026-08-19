@@ -14,7 +14,11 @@
     "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
     "flavor": {"type": "string", "minLength": 1, "maxLength": 100},
     "timeout": {"type": "string", "minLength": 1, "maxLength": 100},
-    "environment": {"type": "object", "additionalProperties": {"type": "string"}},
+    "environment": {
+      "type": "object",
+      "propertyNames": {"not": {"enum": ["RUN_ID", "ATTEMPT_ID", "PLAN_SHA256"]}},
+      "additionalProperties": {"type": "string"}
+    },
     "secret_names": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "labels": {"type": "object", "additionalProperties": {"type": "string"}},
     "namespace": {"type": "string", "minLength": 1}

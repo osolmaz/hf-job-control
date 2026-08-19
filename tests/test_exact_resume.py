@@ -16,6 +16,8 @@ from hf_job_control.models import (
 )
 from hf_job_control.stores import LocalArtifactStore, MemoryControlStore, MemoryStatusStore
 
+PLAN_SHA256 = "a" * 64
+
 
 @dataclass
 class TrainingState:
@@ -40,18 +42,18 @@ class TrainingAdapter:
     def spec(self) -> AdapterSpec:
         return AdapterSpec(name="training-state", version=1, resume_mode=ResumeMode.EXACT)
 
-    def save(self, destination: Path, boundary: Boundary) -> JsonObject:
+    def save(self, destination: Path, boundary: Boundary) -> None:
+        del boundary
         value = {
             "momentum": self.state.momentum,
             "rng": self.state.rng,
             "step": self.state.step,
             "weight": self.state.weight,
         }
-        destination.write_text(json.dumps(value), encoding="utf-8")
-        return {"step": boundary.sequence}
+        (destination / "state.json").write_text(json.dumps(value), encoding="utf-8")
 
     def restore(self, source: Path, manifest: CheckpointManifest) -> JsonObject:
-        value = json.loads(source.read_text(encoding="utf-8"))
+        value = json.loads((source / "state.json").read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise TypeError("training checkpoint must be an object")
         self.state = TrainingState(
@@ -70,7 +72,7 @@ def make_controller(
     artifacts: LocalArtifactStore,
 ) -> Controller:
     return Controller(
-        ControllerConfig(run_id="run", attempt_id=attempt_id),
+        ControllerConfig(run_id="run", attempt_id=attempt_id, plan_sha256=PLAN_SHA256),
         control_store=controls,
         status_store=statuses,
         artifact_store=artifacts,

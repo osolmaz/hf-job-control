@@ -29,6 +29,7 @@ from hf_job_control.models import (
     validate_attempt_id,
     validate_job_id,
     validate_run_id,
+    validate_sha256,
 )
 from hf_job_control.progress import ProgressSnapshot
 from hf_job_control.stores import ArtifactStore, ControlStore, StatusStore
@@ -40,6 +41,7 @@ class ControllerConfig:
 
     run_id: str
     attempt_id: str
+    plan_sha256: str
     job_id: str | None = None
     control_attempts: int = 3
     retry_delay_seconds: float = 2.0
@@ -47,6 +49,7 @@ class ControllerConfig:
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
+        validate_sha256(self.plan_sha256, "plan_sha256")
         validate_job_id(self.job_id)
         if self.control_attempts < 1:
             raise ValueError("control_attempts must be >= 1")
@@ -59,11 +62,13 @@ class ControllerConfig:
 
         run_id = os.environ.get("RUN_ID")
         attempt_id = os.environ.get("ATTEMPT_ID")
-        if not run_id or not attempt_id:
-            raise ValueError("RUN_ID and ATTEMPT_ID are required")
+        plan_sha256 = os.environ.get("PLAN_SHA256")
+        if not run_id or not attempt_id or not plan_sha256:
+            raise ValueError("RUN_ID, ATTEMPT_ID, and PLAN_SHA256 are required")
         return cls(
             run_id=run_id,
             attempt_id=attempt_id,
+            plan_sha256=plan_sha256,
             job_id=os.environ.get("JOB_ID"),
         )
 
@@ -126,6 +131,7 @@ class Controller:
                 manifest, resume_evidence = restore_bundle(
                     bundle=bundle,
                     expected_run_id=self.config.run_id,
+                    expected_plan_sha256=self.config.plan_sha256,
                     adapter=adapter,
                 )
             resumed = True
@@ -245,7 +251,11 @@ class Controller:
                 destination=bundle,
                 run_id=self.config.run_id,
                 attempt_id=self.config.attempt_id,
+                plan_sha256=self.config.plan_sha256,
                 boundary=boundary,
+                previous_checkpoint_sha256=(
+                    None if self._checkpoint is None else self._checkpoint.sha256
+                ),
                 adapter=adapter,
             )
             return self.artifact_store.put_checkpoint(self.config.run_id, bundle)
