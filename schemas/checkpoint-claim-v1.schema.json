@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/checkpoint-claim-v1.schema.json",
+  "title": "HF Job Control checkpoint claim v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "attempt_id",
+    "sequence",
+    "plan_sha256",
+    "previous_checkpoint_sha256",
+    "checkpoint",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "attempt_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "previous_checkpoint_sha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      ]
+    },
+    "checkpoint": { "$ref": "artifact-ref-v1.schema.json" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

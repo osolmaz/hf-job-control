@@ -24,12 +24,14 @@ class CounterAdapter:
     def spec(self) -> AdapterSpec:
         return AdapterSpec(name="counter", version=1, resume_mode=ResumeMode.EXACT)
 
-    def save(self, destination: Path, boundary: Boundary) -> JsonObject:
-        destination.write_text(json.dumps({"value": self.value}) + "\n", encoding="utf-8")
-        return {"value": self.value, "sequence": boundary.sequence}
+    def save(self, destination: Path, boundary: Boundary) -> None:
+        del boundary
+        (destination / "state.json").write_text(
+            json.dumps({"value": self.value}) + "\n", encoding="utf-8"
+        )
 
     def restore(self, source: Path, manifest: CheckpointManifest) -> JsonObject:
-        value = json.loads(source.read_text(encoding="utf-8"))
+        value = json.loads((source / "state.json").read_text(encoding="utf-8"))
         if not isinstance(value, dict) or not isinstance(value.get("value"), int):
             raise TypeError("counter checkpoint is invalid")
         self.value = value["value"]
@@ -107,8 +109,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not os.environ.get("RUN_ID") or not os.environ.get("ATTEMPT_ID"):
-        raise ValueError("RUN_ID and ATTEMPT_ID are required")
+    if (
+        not os.environ.get("RUN_ID")
+        or not os.environ.get("ATTEMPT_ID")
+        or not os.environ.get("PLAN_SHA256")
+    ):
+        raise ValueError("RUN_ID, ATTEMPT_ID, and PLAN_SHA256 are required")
     return run_worker(
         control_repo=args.control_repo,
         status_repo=args.status_repo,

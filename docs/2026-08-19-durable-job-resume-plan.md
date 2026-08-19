@@ -81,17 +81,16 @@ Add the following public types to the TypeScript package:
 
 ```ts
 export type Boundary = {
+  name: string;
   sequence: number;
-  phase: string;
-  completed: number;
-  total?: number;
-  unit?: string;
+  reached_at: string;
+  metadata: Readonly<Record<string, JsonValue>>;
 };
 
 export type AdapterSpec = {
   name: string;
-  version: string;
-  resume_mode: "exact" | "boundary";
+  version: number;
+  resume_mode: "exact" | "boundary" | "restart" | "unsupported";
 };
 
 export type CheckpointPayload = {
@@ -186,6 +185,7 @@ export type CheckpointClaim = {
   attempt_id: string;
   sequence: number;
   plan_sha256: string;
+  previous_checkpoint_sha256: string | null;
   checkpoint: CheckpointReference;
   created_at: string;
 };

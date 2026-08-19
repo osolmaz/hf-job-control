@@ -8,7 +8,13 @@ import pytest
 from huggingface_hub import HfApi
 
 from hf_job_control.launch import HubJobLauncher
-from hf_job_control.models import Action, ControlDocument, LaunchSpec
+from hf_job_control.models import (
+    Action,
+    ControlDocument,
+    LaunchSpec,
+    sha256_bytes,
+    stable_json_bytes,
+)
 from hf_job_control.stores import MemoryControlStore
 
 
@@ -58,6 +64,7 @@ def test_launch_adds_identity_and_resolves_secrets() -> None:
     assert api.kwargs["env"] == {
         "ATTEMPT_ID": "attempt-1",
         "MODE": "canary",
+        "PLAN_SHA256": sha256_bytes(stable_json_bytes(spec(secret_names=("HF_TOKEN",)).to_dict())),
         "RUN_ID": "run",
     }
     assert api.kwargs["labels"] == {
@@ -108,12 +115,13 @@ def test_launch_spec_round_trip() -> None:
     assert LaunchSpec.from_dict(original.to_dict()) == original
 
 
-def test_launch_spec_reserves_identity_environment() -> None:
+@pytest.mark.parametrize("name", ["RUN_ID", "ATTEMPT_ID", "PLAN_SHA256"])
+def test_launch_spec_reserves_identity_environment(name: str) -> None:
     with pytest.raises(ValueError, match="assigned by the launcher"):
         LaunchSpec(
             image="python",
             command=("true",),
             flavor="cpu-basic",
             timeout="10m",
-            environment={"RUN_ID": "bad"},
+            environment={name: "bad"},
         )

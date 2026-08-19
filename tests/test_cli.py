@@ -82,7 +82,9 @@ def test_cli_resume_and_verify(
         destination=bundle,
         run_id="run",
         attempt_id="attempt-1",
+        plan_sha256="a" * 64,
         boundary=Boundary(name="counter", sequence=5),
+        previous_checkpoint_sha256=None,
         adapter=CounterAdapter(value=5),
     )
     checkpoint = artifacts.put_checkpoint("run", bundle)
@@ -159,7 +161,9 @@ def test_cli_resume_honors_adapter_mode(
         destination=bundle,
         run_id="run",
         attempt_id="attempt-1",
+        plan_sha256="a" * 64,
         boundary=Boundary(name="counter", sequence=5),
+        previous_checkpoint_sha256=None,
         adapter=ModeAdapter(value=5),
     )
     checkpoint = artifacts.put_checkpoint("run", bundle)

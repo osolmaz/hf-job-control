@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -9,6 +10,12 @@ from hf_job_control.models import (
     AdapterSpec,
     ArtifactRef,
     Boundary,
+    CheckpointClaim,
+    CheckpointManifest,
+    CheckpointPayloadRef,
+    CheckpointPointer,
+    CheckpointReceipt,
+    CheckpointReceiptKind,
     ControlDocument,
     ResumeMode,
     RunState,
@@ -156,3 +163,89 @@ def test_status_rejects_progress_for_another_attempt() -> None:
 def test_adapter_spec_rejects_unstable_name() -> None:
     with pytest.raises(ValueError, match="lowercase identifier"):
         AdapterSpec(name="Bad Adapter", version=1, resume_mode=ResumeMode.EXACT)
+
+
+def checkpoint_payload() -> CheckpointPayloadRef:
+    return CheckpointPayloadRef(path="state.bin", bytes=10, sha256=DIGEST)
+
+
+def checkpoint_manifest() -> CheckpointManifest:
+    return CheckpointManifest(
+        run_id="run",
+        attempt_id="attempt-1",
+        adapter=AdapterSpec(name="state", version=1, resume_mode=ResumeMode.EXACT),
+        plan_sha256=DIGEST,
+        boundary=Boundary(name="batch", sequence=1),
+        previous_checkpoint_sha256=None,
+        payloads=(checkpoint_payload(),),
+        created_at=datetime.now(UTC),
+    )
+
+
+def test_checkpoint_models_round_trip() -> None:
+    manifest = checkpoint_manifest()
+    assert CheckpointManifest.from_dict(manifest.to_dict()) == manifest
+    claim = CheckpointClaim(
+        run_id="run",
+        attempt_id="attempt-1",
+        sequence=1,
+        plan_sha256=DIGEST,
+        previous_checkpoint_sha256=None,
+        checkpoint=artifact(),
+        created_at=datetime.now(UTC),
+    )
+    assert CheckpointClaim.from_dict(claim.to_dict()) == claim
+    pointer = CheckpointPointer(
+        run_id="run",
+        sequence=1,
+        plan_sha256=DIGEST,
+        checkpoint=artifact(),
+        updated_at=datetime.now(UTC),
+    )
+    assert CheckpointPointer.from_dict(pointer.to_dict()) == pointer
+    receipt = CheckpointReceipt(
+        kind=CheckpointReceiptKind.RESTORE,
+        run_id="run",
+        attempt_id="attempt-2",
+        job_id="job-2",
+        plan_sha256=DIGEST,
+        sequence=1,
+        checkpoint=artifact(),
+        adapter=manifest.adapter,
+        created_at=datetime.now(UTC),
+        evidence={"restored": True},
+    )
+    assert CheckpointReceipt.from_dict(receipt.to_dict()) == receipt
+
+
+@pytest.mark.parametrize("path", ["", "/absolute", "a/../b", "a\\b"])
+def test_checkpoint_payload_rejects_unsafe_path(path: str) -> None:
+    with pytest.raises(ValueError, match="safe relative POSIX"):
+        CheckpointPayloadRef(path=path, bytes=0, sha256=DIGEST)
+
+
+def test_checkpoint_manifest_rejects_unsorted_or_duplicate_payloads() -> None:
+    second = CheckpointPayloadRef(path="a.bin", bytes=0, sha256=DIGEST)
+    with pytest.raises(ValueError, match="sorted"):
+        replace(
+            checkpoint_manifest(),
+            payloads=(checkpoint_payload(), second),
+        )
+    with pytest.raises(ValueError, match="unique"):
+        replace(
+            checkpoint_manifest(),
+            payloads=(checkpoint_payload(), checkpoint_payload()),
+        )
+
+
+def test_checkpoint_claim_rejects_invalid_predecessor() -> None:
+    with pytest.raises(ValueError, match="previous_checkpoint_sha256"):
+        CheckpointClaim(
+            run_id="run",
+            attempt_id="attempt-1",
+            sequence=1,
+            plan_sha256=DIGEST,
+            previous_checkpoint_sha256="bad",
+            checkpoint=artifact(),
+            created_at=datetime.now(UTC),
+        )

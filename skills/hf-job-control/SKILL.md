@@ -277,8 +277,8 @@ its own outputs and calls `Controller.finish(decision)`.
 The controller's boundary order is fixed:
 
 1. Publish optional metrics, isolating metric-sink failures.
-2. Ask the adapter to write `payload.bin`.
-3. Build a two-entry `.hfjob` ZIP bundle and hash its payload.
+2. Ask the adapter to write its payload files.
+3. Build the deterministic `.hfjob` bundle and hash every payload.
 4. Upload the bundle under a content-addressed Bucket key.
 5. Publish observed `running` status with boundary and checkpoint plus metrics.
 6. Fetch and validate control with bounded retries.

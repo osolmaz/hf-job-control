@@ -37,6 +37,7 @@ def test_live_worker_shape_stops_at_boundary(
     artifacts = LocalArtifactStore(tmp_path)
     monkeypatch.setenv("RUN_ID", "run")
     monkeypatch.setenv("ATTEMPT_ID", "attempt-1")
+    monkeypatch.setenv("PLAN_SHA256", "a" * 64)
     monkeypatch.setattr(canary, "HubControlStore", lambda _repo: controls)
     monkeypatch.setattr(
         canary,
@@ -73,6 +74,7 @@ def test_canary_safety_limit_fails_without_stop(
     )
     monkeypatch.setenv("RUN_ID", "run")
     monkeypatch.setenv("ATTEMPT_ID", "attempt-1")
+    monkeypatch.setenv("PLAN_SHA256", "a" * 64)
     monkeypatch.setattr(canary, "HubControlStore", lambda _repo: controls)
     monkeypatch.setattr(
         canary,
@@ -99,7 +101,8 @@ def test_canary_safety_limit_fails_without_stop(
 def test_canary_main_requires_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RUN_ID", raising=False)
     monkeypatch.delenv("ATTEMPT_ID", raising=False)
+    monkeypatch.delenv("PLAN_SHA256", raising=False)
     monkeypatch.setattr(canary, "parse_args", lambda: object())
 
-    with pytest.raises(ValueError, match="RUN_ID and ATTEMPT_ID"):
+    with pytest.raises(ValueError, match="RUN_ID, ATTEMPT_ID, and PLAN_SHA256"):
         canary.main()

@@ -44,6 +44,13 @@ class ResumeMode(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class CheckpointReceiptKind(StrEnum):
+    """Checkpoint receipt event kind."""
+
+    RESTORE = "restore"
+    TERMINAL = "terminal"
+
+
 class RunState(StrEnum):
     """Observed state of a logical run."""
 
@@ -139,6 +146,14 @@ def validate_repo_id(value: str, field_name: str = "repo_id") -> str:
 
     if not REPO_ID_RE.fullmatch(value):
         raise ValueError(f"{field_name} must be a namespace/name identifier")
+    return value
+
+
+def validate_sha256(value: str, field_name: str = "sha256") -> str:
+    """Validate one lowercase SHA-256 digest."""
+
+    if not SHA256_RE.fullmatch(value):
+        raise ValueError(f"{field_name} must be 64 lowercase hex characters")
     return value
 
 
@@ -392,26 +407,73 @@ class AdapterSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPayloadRef:
+    """One verified payload inside a checkpoint bundle."""
+
+    path: str
+    bytes: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        path = PurePosixPath(self.path)
+        if (
+            not self.path
+            or path.is_absolute()
+            or self.path != path.as_posix()
+            or "\\" in self.path
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ValueError("checkpoint payload path must be a safe relative POSIX path")
+        if self.bytes < 0:
+            raise ValueError("checkpoint payload bytes must be >= 0")
+        if not SHA256_RE.fullmatch(self.sha256):
+            raise ValueError("checkpoint payload SHA-256 must be 64 lowercase hex characters")
+
+    def to_dict(self) -> JsonObject:
+        return {"bytes": self.bytes, "path": self.path, "sha256": self.sha256}
+
+    @classmethod
+    def from_dict(cls, value: object) -> CheckpointPayloadRef:
+        data = _require_object(value, "checkpoint payload")
+        allowed = {"path", "bytes", "sha256"}
+        _require_fields(data, required=allowed, allowed=allowed)
+        return cls(
+            path=_require_string(data["path"], "path"),
+            bytes=_require_int(data["bytes"], "bytes"),
+            sha256=_require_string(data["sha256"], "sha256"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CheckpointManifest:
     """Manifest stored inside a checkpoint bundle."""
 
     run_id: str
     attempt_id: str
     adapter: AdapterSpec
+    plan_sha256: str
     boundary: Boundary
-    payload_sha256: str
-    payload_bytes: int
+    previous_checkpoint_sha256: str | None
+    payloads: tuple[CheckpointPayloadRef, ...]
     created_at: datetime
-    metadata: JsonObject = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
         validate_attempt_id(self.attempt_id)
-        if not SHA256_RE.fullmatch(self.payload_sha256):
-            raise ValueError("payload_sha256 must be 64 lowercase hex characters")
-        if self.payload_bytes < 0:
-            raise ValueError("payload_bytes must be >= 0")
+        if not SHA256_RE.fullmatch(self.plan_sha256):
+            raise ValueError("plan_sha256 must be 64 lowercase hex characters")
+        if self.previous_checkpoint_sha256 is not None and not SHA256_RE.fullmatch(
+            self.previous_checkpoint_sha256
+        ):
+            raise ValueError(
+                "previous_checkpoint_sha256 must be null or 64 lowercase hex characters"
+            )
+        paths = tuple(payload.path for payload in self.payloads)
+        if paths != tuple(sorted(paths)):
+            raise ValueError("checkpoint payloads must be sorted by path")
+        if len(paths) != len(set(paths)):
+            raise ValueError("checkpoint payload paths must be unique")
         if self.created_at.tzinfo is None:
             raise ValueError("created_at must be timezone-aware")
 
@@ -421,9 +483,9 @@ class CheckpointManifest:
             "attempt_id": self.attempt_id,
             "boundary": self.boundary.to_dict(),
             "created_at": format_datetime(self.created_at),
-            "metadata": self.metadata,
-            "payload_bytes": self.payload_bytes,
-            "payload_sha256": self.payload_sha256,
+            "payloads": [payload.to_dict() for payload in self.payloads],
+            "plan_sha256": self.plan_sha256,
+            "previous_checkpoint_sha256": self.previous_checkpoint_sha256,
             "run_id": self.run_id,
             "schema_version": self.schema_version,
         }
@@ -436,23 +498,221 @@ class CheckpointManifest:
             "run_id",
             "attempt_id",
             "adapter",
+            "plan_sha256",
             "boundary",
-            "payload_sha256",
-            "payload_bytes",
+            "previous_checkpoint_sha256",
+            "payloads",
             "created_at",
-            "metadata",
         }
         _require_fields(data, required=allowed, allowed=allowed)
+        raw_payloads = data["payloads"]
+        if not isinstance(raw_payloads, list):
+            raise TypeError("payloads must be an array")
+        previous = data["previous_checkpoint_sha256"]
+        if previous is not None and not isinstance(previous, str):
+            raise TypeError("previous_checkpoint_sha256 must be a string or null")
         return cls(
             schema_version=_require_int(data["schema_version"], "schema_version", 1),
             run_id=_require_string(data["run_id"], "run_id"),
             attempt_id=_require_string(data["attempt_id"], "attempt_id"),
             adapter=AdapterSpec.from_dict(data["adapter"]),
+            plan_sha256=_require_string(data["plan_sha256"], "plan_sha256"),
             boundary=Boundary.from_dict(data["boundary"]),
-            payload_sha256=_require_string(data["payload_sha256"], "payload_sha256"),
-            payload_bytes=_require_int(data["payload_bytes"], "payload_bytes"),
+            previous_checkpoint_sha256=previous,
+            payloads=tuple(CheckpointPayloadRef.from_dict(item) for item in raw_payloads),
             created_at=parse_datetime(data["created_at"], "created_at"),
-            metadata=_require_object(data["metadata"], "metadata"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointClaim:
+    """Immutable claim that commits one checkpoint sequence."""
+
+    run_id: str
+    attempt_id: str
+    sequence: int
+    plan_sha256: str
+    previous_checkpoint_sha256: str | None
+    checkpoint: ArtifactRef
+    created_at: datetime
+    schema_version: int = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        validate_attempt_id(self.attempt_id)
+        if self.sequence < 1:
+            raise ValueError("checkpoint claim sequence must be >= 1")
+        validate_sha256(self.plan_sha256, "plan_sha256")
+        if self.previous_checkpoint_sha256 is not None:
+            validate_sha256(self.previous_checkpoint_sha256, "previous_checkpoint_sha256")
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "attempt_id": self.attempt_id,
+            "checkpoint": self.checkpoint.to_dict(),
+            "created_at": format_datetime(self.created_at),
+            "plan_sha256": self.plan_sha256,
+            "previous_checkpoint_sha256": self.previous_checkpoint_sha256,
+            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "sequence": self.sequence,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> CheckpointClaim:
+        data = _require_object(value, "checkpoint claim")
+        allowed = {
+            "schema_version",
+            "run_id",
+            "attempt_id",
+            "sequence",
+            "plan_sha256",
+            "previous_checkpoint_sha256",
+            "checkpoint",
+            "created_at",
+        }
+        _require_fields(data, required=allowed, allowed=allowed)
+        previous = data["previous_checkpoint_sha256"]
+        if previous is not None and not isinstance(previous, str):
+            raise TypeError("previous_checkpoint_sha256 must be a string or null")
+        return cls(
+            schema_version=_require_int(data["schema_version"], "schema_version", 1),
+            run_id=_require_string(data["run_id"], "run_id"),
+            attempt_id=_require_string(data["attempt_id"], "attempt_id"),
+            sequence=_require_int(data["sequence"], "sequence", 1),
+            plan_sha256=_require_string(data["plan_sha256"], "plan_sha256"),
+            previous_checkpoint_sha256=previous,
+            checkpoint=ArtifactRef.from_dict(data["checkpoint"]),
+            created_at=parse_datetime(data["created_at"], "created_at"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointPointer:
+    """Mutable startup hint for the latest claimed checkpoint."""
+
+    run_id: str
+    sequence: int
+    plan_sha256: str
+    checkpoint: ArtifactRef
+    updated_at: datetime
+    schema_version: int = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        if self.sequence < 1:
+            raise ValueError("checkpoint pointer sequence must be >= 1")
+        validate_sha256(self.plan_sha256, "plan_sha256")
+        if self.updated_at.tzinfo is None:
+            raise ValueError("updated_at must be timezone-aware")
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "checkpoint": self.checkpoint.to_dict(),
+            "plan_sha256": self.plan_sha256,
+            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "sequence": self.sequence,
+            "updated_at": format_datetime(self.updated_at),
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> CheckpointPointer:
+        data = _require_object(value, "checkpoint pointer")
+        allowed = {
+            "schema_version",
+            "run_id",
+            "sequence",
+            "plan_sha256",
+            "checkpoint",
+            "updated_at",
+        }
+        _require_fields(data, required=allowed, allowed=allowed)
+        return cls(
+            schema_version=_require_int(data["schema_version"], "schema_version", 1),
+            run_id=_require_string(data["run_id"], "run_id"),
+            sequence=_require_int(data["sequence"], "sequence", 1),
+            plan_sha256=_require_string(data["plan_sha256"], "plan_sha256"),
+            checkpoint=ArtifactRef.from_dict(data["checkpoint"]),
+            updated_at=parse_datetime(data["updated_at"], "updated_at"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointReceipt:
+    """Immutable evidence of checkpoint restore or terminal completion."""
+
+    kind: CheckpointReceiptKind
+    run_id: str
+    attempt_id: str
+    plan_sha256: str
+    sequence: int
+    checkpoint: ArtifactRef
+    adapter: AdapterSpec
+    created_at: datetime
+    job_id: str | None = None
+    evidence: JsonObject | None = None
+    schema_version: int = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        validate_attempt_id(self.attempt_id)
+        validate_job_id(self.job_id)
+        validate_sha256(self.plan_sha256, "plan_sha256")
+        if self.sequence < 1:
+            raise ValueError("checkpoint receipt sequence must be >= 1")
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
+
+    def to_dict(self) -> JsonObject:
+        result: JsonObject = {
+            "adapter": self.adapter.to_dict(),
+            "attempt_id": self.attempt_id,
+            "checkpoint": self.checkpoint.to_dict(),
+            "created_at": format_datetime(self.created_at),
+            "kind": self.kind.value,
+            "plan_sha256": self.plan_sha256,
+            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "sequence": self.sequence,
+        }
+        if self.job_id is not None:
+            result["job_id"] = self.job_id
+        if self.evidence is not None:
+            result["evidence"] = self.evidence
+        return result
+
+    @classmethod
+    def from_dict(cls, value: object) -> CheckpointReceipt:
+        data = _require_object(value, "checkpoint receipt")
+        required = {
+            "schema_version",
+            "kind",
+            "run_id",
+            "attempt_id",
+            "plan_sha256",
+            "sequence",
+            "checkpoint",
+            "adapter",
+            "created_at",
+        }
+        allowed = required | {"job_id", "evidence"}
+        _require_fields(data, required=required, allowed=allowed)
+        evidence = data.get("evidence")
+        return cls(
+            schema_version=_require_int(data["schema_version"], "schema_version", 1),
+            kind=CheckpointReceiptKind(_require_string(data["kind"], "kind")),
+            run_id=_require_string(data["run_id"], "run_id"),
+            attempt_id=_require_string(data["attempt_id"], "attempt_id"),
+            job_id=_optional_string(data, "job_id"),
+            plan_sha256=_require_string(data["plan_sha256"], "plan_sha256"),
+            sequence=_require_int(data["sequence"], "sequence", 1),
+            checkpoint=ArtifactRef.from_dict(data["checkpoint"]),
+            adapter=AdapterSpec.from_dict(data["adapter"]),
+            created_at=parse_datetime(data["created_at"], "created_at"),
+            evidence=None if evidence is None else _require_object(evidence, "evidence"),
         )
 
 
@@ -708,10 +968,13 @@ class LaunchSpec:
             raise ValueError("image, command, flavor, and timeout are required")
         if any(not item for item in self.command):
             raise ValueError("command items must be non-empty")
-        if "RUN_ID" in self.environment or "ATTEMPT_ID" in self.environment:
-            raise ValueError("RUN_ID and ATTEMPT_ID are assigned by the launcher")
+        reserved = {"RUN_ID", "ATTEMPT_ID", "PLAN_SHA256"}
+        if reserved.intersection(self.environment):
+            raise ValueError("RUN_ID, ATTEMPT_ID, and PLAN_SHA256 are assigned by the launcher")
         if any(not name for name in self.secret_names):
             raise ValueError("secret names must be non-empty")
+        if len(self.secret_names) != len(set(self.secret_names)):
+            raise ValueError("secret names must be unique")
 
     def to_dict(self) -> JsonObject:
         result: JsonObject = {

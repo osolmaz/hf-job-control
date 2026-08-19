@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+export * from "./checkpoint.js";
+export * from "./launch-spec.js";
+
 export const PROGRESS_SCHEMA_VERSION = 1 as const;
 const MAX_TRACKS = 256;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;

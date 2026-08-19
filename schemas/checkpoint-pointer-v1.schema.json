@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/checkpoint-pointer-v1.schema.json",
+  "title": "HF Job Control checkpoint pointer hint v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "sequence",
+    "plan_sha256",
+    "checkpoint",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "checkpoint": { "$ref": "artifact-ref-v1.schema.json" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

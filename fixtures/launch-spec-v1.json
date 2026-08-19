@@ -1,0 +1,20 @@
+{
+  "command": [
+    "node",
+    "worker.js"
+  ],
+  "environment": {
+    "MODE": "production"
+  },
+  "flavor": "cpu-basic",
+  "image": "node:24",
+  "labels": {
+    "app": "fixture"
+  },
+  "namespace": "osolmaz",
+  "schema_version": 1,
+  "secret_names": [
+    "HF_TOKEN"
+  ],
+  "timeout": "6h"
+}

@@ -32,6 +32,8 @@ from hf_job_control.stores import (
     MemoryStatusStore,
 )
 
+PLAN_SHA256 = "a" * 64
+
 
 def publish(
     store: MemoryControlStore,
@@ -63,6 +65,7 @@ def controller(
         ControllerConfig(
             run_id="run",
             attempt_id=attempt_id,
+            plan_sha256=PLAN_SHA256,
             job_id=f"job-{attempt_id}",
             control_attempts=1,
             retry_delay_seconds=0,
@@ -180,7 +183,7 @@ def test_metric_sink_failure_does_not_break_control(tmp_path: Path) -> None:
     statuses = MemoryStatusStore()
     publish(controls, "run", 1, Action.RUN)
     worker = Controller(
-        ControllerConfig(run_id="run", attempt_id="attempt-1"),
+        ControllerConfig(run_id="run", attempt_id="attempt-1", plan_sha256=PLAN_SHA256),
         control_store=controls,
         status_store=statuses,
         artifact_store=LocalArtifactStore(tmp_path),
@@ -384,6 +387,7 @@ def test_control_failure_pauses_after_checkpoint(tmp_path: Path) -> None:
         ControllerConfig(
             run_id="run",
             attempt_id="attempt-1",
+            plan_sha256=PLAN_SHA256,
             control_attempts=1,
             retry_delay_seconds=0,
         ),
@@ -405,19 +409,28 @@ def test_control_failure_pauses_after_checkpoint(tmp_path: Path) -> None:
 
 def test_controller_config_rejects_invalid_retry_settings() -> None:
     with pytest.raises(ValueError, match="control_attempts"):
-        ControllerConfig(run_id="run", attempt_id="attempt-1", control_attempts=0)
+        ControllerConfig(
+            run_id="run", attempt_id="attempt-1", plan_sha256=PLAN_SHA256, control_attempts=0
+        )
     with pytest.raises(ValueError, match="retry_delay"):
-        ControllerConfig(run_id="run", attempt_id="attempt-1", retry_delay_seconds=-1)
+        ControllerConfig(
+            run_id="run",
+            attempt_id="attempt-1",
+            plan_sha256=PLAN_SHA256,
+            retry_delay_seconds=-1,
+        )
 
 
 def test_controller_config_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RUN_ID", "run")
     monkeypatch.setenv("ATTEMPT_ID", "attempt-1")
+    monkeypatch.setenv("PLAN_SHA256", PLAN_SHA256)
     monkeypatch.setenv("JOB_ID", "job-123")
 
     assert ControllerConfig.from_environment() == ControllerConfig(
         run_id="run",
         attempt_id="attempt-1",
+        plan_sha256=PLAN_SHA256,
         job_id="job-123",
     )
 

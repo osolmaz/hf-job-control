@@ -394,14 +394,15 @@ not restore.
 The complete `.hfjob` bytes differ from the reference. Treat as corruption or
 unauthorized replacement. Investigate Bucket access and publication logs.
 
-### Archive entry mismatch
+### Container or manifest mismatch
 
-The ZIP must contain exactly `manifest.json` and `payload.bin`. Extra entries,
-missing entries, duplicate naming effects, or path variants are rejected.
+The `.hfjob` magic, manifest length, canonical manifest, or payload layout is
+invalid. Truncation, trailing bytes, duplicate payload paths, and unsafe paths
+are rejected.
 
 ### Inner payload mismatch
 
-Extracted payload bytes or digest differ from the manifest. Preserve the bundle
+A payload byte count or digest differs from the manifest. Preserve the bundle
 for incident analysis and reject restore.
 
 ### Run ID mismatch
@@ -493,8 +494,8 @@ an unrelated crash by evidence.
 A Hugging Face timeout can kill the worker between boundaries. Capture terminal
 Job details and latest durable status. Verify latest checkpoint.
 
-If status is `paused`, use normal resume. If latest status is `running`, protocol
-v0.1 may block replayed startup generation. Use the project recovery policy and
+If status is `paused`, use normal resume. If latest status is `running`, the
+protocol may block replayed startup generation. Use the project recovery policy and
 do not delete status. Prevent recurrence by choosing a longer operational
 timeout or more frequent safe boundaries in a new immutable launch contract.
 

@@ -34,7 +34,11 @@ REQUIRED_REFERENCES = {
 }
 REQUIRED_SCHEMAS = {
     "applied-control-v1.schema.json",
+    "artifact-ref-v1.schema.json",
+    "checkpoint-claim-v1.schema.json",
     "checkpoint-manifest-v1.schema.json",
+    "checkpoint-pointer-v1.schema.json",
+    "checkpoint-receipt-v1.schema.json",
     "control-v1.schema.json",
     "launch-spec-v1.schema.json",
     "progress-claim-v1.schema.json",
