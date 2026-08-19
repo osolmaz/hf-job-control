@@ -12,6 +12,7 @@ import {
   stableCheckpointJsonBytes,
   verifyCheckpointBundle,
   type CheckpointAdapter,
+  type CheckpointAdapterSpec,
   type CheckpointBoundary,
   type CheckpointClaim,
   type CheckpointManifest,
@@ -33,7 +34,7 @@ function boundary(sequence: number): CheckpointBoundary {
 }
 
 class TextAdapter implements CheckpointAdapter<{ restored: string }> {
-  readonly spec = {
+  readonly spec: CheckpointAdapterSpec = {
     name: "text",
     version: 1,
     resume_mode: "exact" as const,
@@ -60,6 +61,14 @@ class TextAdapter implements CheckpointAdapter<{ restored: string }> {
     this.value = Buffer.from(state).toString("utf8");
     return { restored: this.value };
   }
+}
+
+class RestartTextAdapter extends TextAdapter {
+  override readonly spec = {
+    name: "text",
+    version: 1,
+    resume_mode: "restart" as const,
+  };
 }
 
 class MemoryCheckpointObjects implements CheckpointObjectStore {
@@ -249,6 +258,28 @@ test("a pointer-hint failure does not lose a claimed checkpoint", async () => {
   });
   const restored = await replacement.restoreLatest(new TextAdapter(""));
   assert.equal(restored?.checkpoint.sha256, reference.sha256);
+});
+
+test("coordinator rejects restore for restart-only adapters", async () => {
+  const store = new MemoryCheckpointObjects();
+  const first = CheckpointCoordinator.create({
+    runId: "run",
+    attemptId: "attempt-1",
+    planSha256: PLAN_SHA256,
+    store,
+    clock: () => new Date(CREATED_AT),
+  });
+  await first.commit(boundary(1), new TextAdapter("one"));
+  const replacement = CheckpointCoordinator.create({
+    runId: "run",
+    attemptId: "attempt-2",
+    planSha256: PLAN_SHA256,
+    store,
+  });
+  await assert.rejects(
+    replacement.restoreLatest(new RestartTextAdapter("")),
+    /does not support/u,
+  );
 });
 
 test("coordinator rejects different claims for one sequence", async () => {

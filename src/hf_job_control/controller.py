@@ -138,6 +138,9 @@ class Controller:
             boundary = manifest.boundary
             self._boundary = boundary
             self._checkpoint = control.resume_from
+        else:
+            self._boundary = None
+            self._checkpoint = None
         self._apply_snapshot(
             snapshot,
             boundary=boundary,
