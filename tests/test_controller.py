@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from hf_job_control.canary import CounterAdapter
+from hf_job_control.checkpoint import read_manifest
 from hf_job_control.controller import Controller, ControllerConfig
 from hf_job_control.models import (
     Action,
@@ -31,6 +32,8 @@ from hf_job_control.stores import (
     MemoryControlStore,
     MemoryStatusStore,
 )
+
+PLAN_SHA256 = "a" * 64
 
 
 def publish(
@@ -63,6 +66,7 @@ def controller(
         ControllerConfig(
             run_id="run",
             attempt_id=attempt_id,
+            plan_sha256=PLAN_SHA256,
             job_id=f"job-{attempt_id}",
             control_attempts=1,
             retry_delay_seconds=0,
@@ -180,7 +184,7 @@ def test_metric_sink_failure_does_not_break_control(tmp_path: Path) -> None:
     statuses = MemoryStatusStore()
     publish(controls, "run", 1, Action.RUN)
     worker = Controller(
-        ControllerConfig(run_id="run", attempt_id="attempt-1"),
+        ControllerConfig(run_id="run", attempt_id="attempt-1", plan_sha256=PLAN_SHA256),
         control_store=controls,
         status_store=statuses,
         artifact_store=LocalArtifactStore(tmp_path),
@@ -384,6 +388,7 @@ def test_control_failure_pauses_after_checkpoint(tmp_path: Path) -> None:
         ControllerConfig(
             run_id="run",
             attempt_id="attempt-1",
+            plan_sha256=PLAN_SHA256,
             control_attempts=1,
             retry_delay_seconds=0,
         ),
@@ -405,21 +410,61 @@ def test_control_failure_pauses_after_checkpoint(tmp_path: Path) -> None:
 
 def test_controller_config_rejects_invalid_retry_settings() -> None:
     with pytest.raises(ValueError, match="control_attempts"):
-        ControllerConfig(run_id="run", attempt_id="attempt-1", control_attempts=0)
+        ControllerConfig(
+            run_id="run", attempt_id="attempt-1", plan_sha256=PLAN_SHA256, control_attempts=0
+        )
     with pytest.raises(ValueError, match="retry_delay"):
-        ControllerConfig(run_id="run", attempt_id="attempt-1", retry_delay_seconds=-1)
+        ControllerConfig(
+            run_id="run",
+            attempt_id="attempt-1",
+            plan_sha256=PLAN_SHA256,
+            retry_delay_seconds=-1,
+        )
 
 
 def test_controller_config_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RUN_ID", "run")
     monkeypatch.setenv("ATTEMPT_ID", "attempt-1")
+    monkeypatch.setenv("PLAN_SHA256", PLAN_SHA256)
     monkeypatch.setenv("JOB_ID", "job-123")
 
     assert ControllerConfig.from_environment() == ControllerConfig(
         run_id="run",
         attempt_id="attempt-1",
+        plan_sha256=PLAN_SHA256,
         job_id="job-123",
     )
+
+
+def test_fresh_restart_does_not_link_unrestored_checkpoint(tmp_path: Path) -> None:
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    artifacts = LocalArtifactStore(tmp_path / "artifacts")
+    publish(controls, "run", 1, Action.RUN)
+    first = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+    first.start(CounterAdapter())
+    first.boundary(boundary=Boundary(name="counter", sequence=1), adapter=CounterAdapter(1))
+    publish(controls, "run", 2, Action.RUN)
+    second = controller(
+        attempt_id="attempt-2",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+    adapter = CounterAdapter()
+    second.start(adapter)
+    second.boundary(boundary=Boundary(name="counter", sequence=1), adapter=adapter)
+    status = statuses.fetch_status("run")
+    assert status is not None
+    assert status.checkpoint is not None
+    bundle = tmp_path / "fresh-restart.hfjob"
+    artifacts.get_checkpoint(status.checkpoint, bundle)
+    assert read_manifest(bundle).previous_checkpoint_sha256 is None
 
 
 def test_start_rejects_resume_for_restart_adapter(tmp_path: Path) -> None:

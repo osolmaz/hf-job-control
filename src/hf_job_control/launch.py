@@ -57,8 +57,13 @@ class HubJobLauncher:
             if value is None:
                 raise ValueError(f"missing secret value for {name}")
             secrets[name] = value
-        self.control_store.register_launch_spec(run_id, spec)
-        environment = {**spec.environment, "ATTEMPT_ID": chosen_attempt, "RUN_ID": run_id}
+        launch_spec = self.control_store.register_launch_spec(run_id, spec)
+        environment = {
+            **spec.environment,
+            "ATTEMPT_ID": chosen_attempt,
+            "PLAN_SHA256": launch_spec.sha256,
+            "RUN_ID": run_id,
+        }
         labels = {**spec.labels, "attempt_id": chosen_attempt, "run_id": run_id}
         info = self.api.run_job(
             image=spec.image,

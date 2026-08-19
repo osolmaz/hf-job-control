@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/osolmaz/hf-job-control/blob/main/schemas/artifact-ref-v1.schema.json",
+  "title": "HF Job Control artifact reference v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bucket", "key", "sha256", "bytes"],
+  "properties": {
+    "bucket": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "bytes": { "type": "integer", "minimum": 1 }
+  }
+}

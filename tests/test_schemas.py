@@ -13,7 +13,12 @@ from hf_job_control.models import (
     AppliedControlReceipt,
     ArtifactRef,
     Boundary,
+    CheckpointClaim,
     CheckpointManifest,
+    CheckpointPayloadRef,
+    CheckpointPointer,
+    CheckpointReceipt,
+    CheckpointReceiptKind,
     ControlDocument,
     LaunchSpec,
     ResumeMode,
@@ -156,12 +161,52 @@ def test_checkpoint_schema_matches_model() -> None:
         run_id="run",
         attempt_id="attempt-1",
         adapter=AdapterSpec(name="test", version=1, resume_mode=ResumeMode.EXACT),
+        plan_sha256="a" * 64,
         boundary=Boundary(name="batch", sequence=1),
-        payload_sha256="a" * 64,
-        payload_bytes=10,
+        previous_checkpoint_sha256=None,
+        payloads=(CheckpointPayloadRef(path="state.bin", bytes=10, sha256="b" * 64),),
         created_at=datetime.now(UTC),
     )
     validate("checkpoint-manifest-v1.schema.json", manifest.to_dict())
+
+
+def test_checkpoint_claim_pointer_and_receipt_schemas_match_models() -> None:
+    checkpoint = ArtifactRef(
+        bucket="owner/bucket",
+        key=f"run/checkpoints/sha256-{'b' * 64}/checkpoint.hfjob",
+        sha256="b" * 64,
+        bytes=100,
+    )
+    claim = CheckpointClaim(
+        run_id="run",
+        attempt_id="attempt-1",
+        sequence=1,
+        plan_sha256="a" * 64,
+        previous_checkpoint_sha256=None,
+        checkpoint=checkpoint,
+        created_at=datetime.now(UTC),
+    )
+    validate("checkpoint-claim-v1.schema.json", claim.to_dict())
+    pointer = CheckpointPointer(
+        run_id="run",
+        sequence=1,
+        plan_sha256="a" * 64,
+        checkpoint=checkpoint,
+        updated_at=datetime.now(UTC),
+    )
+    validate("checkpoint-pointer-v1.schema.json", pointer.to_dict())
+    receipt = CheckpointReceipt(
+        kind=CheckpointReceiptKind.RESTORE,
+        run_id="run",
+        attempt_id="attempt-2",
+        plan_sha256="a" * 64,
+        sequence=1,
+        checkpoint=checkpoint,
+        adapter=AdapterSpec(name="test", version=1, resume_mode=ResumeMode.EXACT),
+        created_at=datetime.now(UTC),
+        evidence={"restored": True},
+    )
+    validate("checkpoint-receipt-v1.schema.json", receipt.to_dict())
 
 
 def test_launch_schema_matches_model() -> None:

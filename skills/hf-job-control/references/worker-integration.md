@@ -46,6 +46,7 @@ The package does not terminate the process. The worker must honor
 ```text
 RUN_ID=<logical run ID>
 ATTEMPT_ID=<physical attempt ID>
+PLAN_SHA256=<immutable launch specification SHA-256>
 ```
 
 Hugging Face injects:
@@ -65,8 +66,9 @@ HF_JOB_STATUS_PREFIX=runs
 ```
 
 The current library's `ControllerConfig.from_environment()` reads `RUN_ID`,
-`ATTEMPT_ID`, and optional `JOB_ID`. Construct the stores explicitly from the
-other values.
+`ATTEMPT_ID`, `PLAN_SHA256`, and optional `JOB_ID`. The launcher injects the
+canonical launch-specification SHA-256 as `PLAN_SHA256`. Construct the stores
+explicitly from the other values.
 
 ## Minimal integration
 
@@ -99,19 +101,18 @@ class ApplicationAdapter:
             resume_mode=ResumeMode.EXACT,
         )
 
-    def save(self, destination: Path, boundary: Boundary) -> JsonObject:
-        save_application_state(destination)
-        return {
-            "global_position": boundary.sequence,
-            "format": "application-checkpoint-v1",
-        }
+    def save(self, destination: Path, boundary: Boundary) -> None:
+        save_application_state(
+            destination / "state.bin",
+            global_position=boundary.sequence,
+        )
 
     def restore(
         self,
         source: Path,
         manifest: CheckpointManifest,
     ) -> JsonObject:
-        restored = restore_application_state(source)
+        restored = restore_application_state(source / "state.bin")
         if restored.global_position != manifest.boundary.sequence:
             raise ValueError("restored position does not match checkpoint boundary")
         return {
@@ -173,8 +174,8 @@ if __name__ == "__main__":
     raise SystemExit(run())
 ```
 
-`JsonObject` is defined in `hf_job_control.models` in v0.1 and is not exported
-from the package root. Keep imports aligned with the installed package.
+`JsonObject` remains defined in `hf_job_control.models`. Keep imports aligned
+with the installed package.
 
 ## Startup sequence
 
@@ -195,10 +196,10 @@ A resume adds these steps before the receipt:
 
 1. Download the `resume_from` bundle.
 2. Verify outer Bucket identity, byte count, and SHA-256.
-3. Require exactly `manifest.json` and `payload.bin` in the ZIP.
-4. Validate manifest schema, logical run ID, and adapter specification.
-5. Hash the extracted payload and compare it with the inner manifest.
-6. Call `adapter.restore()`.
+3. Verify the deterministic container magic and manifest length.
+4. Validate the manifest, logical run, plan, and adapter identities.
+5. Verify every payload path, byte count, and SHA-256.
+6. Call `adapter.restore()` with the verified payload directory.
 7. Put returned restore evidence in the `resumed` receipt.
 
 Do not start data iteration before `start()` completes. A shuffle iterator
@@ -217,7 +218,7 @@ startup status can be retried with the same desired generation and identical
 launch specification. If startup status already exists, do not launch another
 attempt under the same generation.
 
-The v0.1 CLI has no general restart command for a non-paused failed status. An
+The CLI has no general restart command for a non-paused failed status. An
 integration that needs infrastructure recovery from such a state must define and
 test a project policy before production use. Do not hand-edit status or control
 to bypass the startup rule.
@@ -251,8 +252,8 @@ Do not include secrets, large arrays, NaN, infinity, or mutable URLs.
 
 1. It sends metrics to the configured `MetricSink`.
 2. It isolates metric-sink exceptions and carries the error into status.
-3. It invokes `adapter.save()` into a temporary payload path.
-4. It hashes the payload and writes the two-entry checkpoint bundle.
+3. It invokes `adapter.save()` with a temporary payload directory.
+4. It hashes each payload and writes the deterministic checkpoint bundle.
 5. It hashes and uploads the complete bundle under a content-addressed key.
 6. It publishes `running` status containing boundary and checkpoint plus metrics.
 7. It fetches control with bounded retries.
@@ -304,7 +305,7 @@ a message. `finish()` publishes `failed`.
 
 ## Natural completion limitation
 
-The v0.1 controller can publish a terminal status through `finish()` only after
+The controller can publish a terminal status through `finish()` only after
 an exit decision. A bounded worker that reaches its natural endpoint while
 desired action remains `run` cannot call `finish()` with the continue decision.
 
@@ -313,7 +314,7 @@ Choose one tested integration policy:
 - Arrange for the operator or automation to publish `stop` before the final safe
   boundary.
 - Keep project-specific final status separate and document that the generic
-  controller status remains `running` in v0.1.
+  controller status remains `running`.
 - Extend the package in a reviewed release with an explicit natural-completion
   API before relying on bounded automatic completion.
 
@@ -338,26 +339,25 @@ must present exactly the same `AdapterSpec` as the checkpoint manifest.
 
 `save(destination, boundary)` must:
 
-- Write one complete payload file at `destination`.
-- Flush and close all nested writers before returning.
+- Write zero or more complete payload files below the destination directory.
+- Use safe relative paths and close all nested writers before returning.
 - Capture state corresponding exactly to `boundary`.
-- Return small JSON metadata that describes format and state.
 - Raise on partial state, failed synchronization, or serialization error.
 - Avoid external mutable references needed for restore.
 
 `restore(source, manifest)` must:
 
-- Treat `source` as a verified but application-specific payload.
+- Treat `source` as a directory of verified application-specific payloads.
 - Validate its own internal format and invariants.
 - Restore every state item promised by the resume mode.
 - Check that restored position matches `manifest.boundary`.
 - Return small JSON evidence that proves what was restored.
 - Raise before work begins when any required state is missing or incompatible.
 
-The package stores payloads with ZIP method `ZIP_STORED`, so the adapter should
-perform compression internally only when it is worthwhile. For multi-file
-framework checkpoints, write a deterministic tar archive, SQLite file, or
-framework bundle into the single destination path.
+The package stores payload bytes without compression, so the adapter should
+compress a payload internally only when it is worthwhile. Multi-file framework
+checkpoints can use several relative payload paths or one deterministic tar,
+SQLite, or framework bundle.
 
 ## Resume mode selection
 
@@ -422,7 +422,7 @@ silently change learning rate behavior.
 
 For distributed training, capture and restore rank-specific RNG and sampler
 state. Coordinate checkpoint creation so every rank describes the same global
-boundary. The v0.1 package has no built-in distributed checkpoint coordinator,
+boundary. The package has no built-in distributed framework checkpoint coordinator,
 so the application must create one aggregate payload before calling the
 controller.
 

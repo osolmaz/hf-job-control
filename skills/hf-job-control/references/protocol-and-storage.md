@@ -358,14 +358,14 @@ message instead.
 
 ## Checkpoint bundle
 
-A `.hfjob` checkpoint is a ZIP archive with exactly two entries:
+A `.hfjob` checkpoint uses one deterministic binary container:
 
 ```text
-manifest.json
-payload.bin
+HFJOB1\n
+<8-byte unsigned big-endian manifest length>
+<canonical manifest JSON>
+<payload bytes in manifest path order>
 ```
-
-Additional or missing entries are rejected. ZIP compression is `ZIP_STORED`.
 
 ### Inner manifest
 
@@ -375,47 +375,34 @@ Schema:
 schemas/checkpoint-manifest-v1.schema.json
 ```
 
-Example shape:
+The manifest binds zero or more payload files to the run, attempt, frozen plan,
+boundary, predecessor, and adapter. Payload paths are sorted, relative POSIX
+paths. Each payload has an exact byte count and SHA-256. Restore requires exact
+adapter specification equality, including resume mode and version.
 
-```json
-{
-  "adapter": {
-    "name": "training-state",
-    "resume_mode": "exact",
-    "version": 1
-  },
-  "attempt_id": "attempt-123",
-  "boundary": {
-    "metadata": {},
-    "name": "optimizer-step",
-    "reached_at": "2026-07-24T08:30:00Z",
-    "sequence": 7009
-  },
-  "created_at": "2026-07-24T08:30:05Z",
-  "metadata": {
-    "format": "training-checkpoint-v1"
-  },
-  "payload_bytes": 987654321,
-  "payload_sha256": "<64-lowercase-hex>",
-  "run_id": "202607241430-calm-otter",
-  "schema_version": 1
-}
-```
-
-The manifest binds payload bytes to run, attempt, boundary, and adapter. Restore
-requires exact adapter specification equality, including resume mode and
-version.
+The v1 wire format changed in place for new logical runs. Old ZIP-based v1
+bundles remain audit evidence. The new coordinator does not restore them.
 
 ### Verification layers
 
-Checkpoint restore has two digest layers:
+Checkpoint restore verifies the complete bundle reference first. It then parses
+the manifest and verifies each payload byte count and digest before calling the
+adapter. Python and TypeScript use one shared fixture to prove identical
+manifest and bundle bytes.
 
-1. `ArtifactRef.sha256` covers the complete ZIP bundle.
-2. `CheckpointManifest.payload_sha256` covers extracted `payload.bin`.
+### TypeScript sequence claims
 
-Both include exact byte counts. The outer layer protects artifact transport and
-reference identity. The inner layer protects payload identity after archive
-parsing.
+The TypeScript coordinator commits each sequence through an immutable claim:
+
+```text
+<run_id>/checkpoints/claims/sequence-<sequence>/<attempt_id>.json
+```
+
+The claim records the checkpoint and predecessor digests. Different references
+for one sequence stop recovery. `<run_id>/current.json` is a mutable startup
+hint and never replaces claim verification. The relevant schemas are
+`checkpoint-claim-v1.schema.json`, `checkpoint-pointer-v1.schema.json`, and
+`checkpoint-receipt-v1.schema.json`.
 
 ## Resume modes
 
@@ -467,11 +454,11 @@ applied `run` generation.
 
 ## Boundary ordering
 
-The actual v0.1 controller order is:
+The Python lifecycle controller order is:
 
 1. Publish optional metrics.
-2. Save adapter payload.
-3. Create checkpoint bundle.
+2. Save adapter payload files.
+3. Create the deterministic checkpoint bundle.
 4. Upload complete bundle to the artifact store.
 5. Publish observed `running` status with the checkpoint.
 6. Fetch current control with bounded retries.

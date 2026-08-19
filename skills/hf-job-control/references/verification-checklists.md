@@ -205,7 +205,7 @@ items automatically.
 - [ ] Metrics use training-only or otherwise authorized data.
 - [ ] Private tests remain sealed until their release gate.
 - [ ] Safe boundary and checkpoint frequency are fixed.
-- [ ] Natural completion behavior is compatible with the v0.1 controller.
+- [ ] Natural completion behavior is compatible with the installed controller version.
 
 ### Code and inputs
 
