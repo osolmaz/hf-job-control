@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from hf_job_control.canary import CounterAdapter
+from hf_job_control.checkpoint import read_manifest
 from hf_job_control.controller import Controller, ControllerConfig
 from hf_job_control.models import (
     Action,
@@ -433,6 +434,37 @@ def test_controller_config_reads_environment(monkeypatch: pytest.MonkeyPatch) ->
         plan_sha256=PLAN_SHA256,
         job_id="job-123",
     )
+
+
+def test_fresh_restart_does_not_link_unrestored_checkpoint(tmp_path: Path) -> None:
+    controls = MemoryControlStore()
+    statuses = MemoryStatusStore()
+    artifacts = LocalArtifactStore(tmp_path / "artifacts")
+    publish(controls, "run", 1, Action.RUN)
+    first = controller(
+        attempt_id="attempt-1",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+    first.start(CounterAdapter())
+    first.boundary(boundary=Boundary(name="counter", sequence=1), adapter=CounterAdapter(1))
+    publish(controls, "run", 2, Action.RUN)
+    second = controller(
+        attempt_id="attempt-2",
+        controls=controls,
+        statuses=statuses,
+        artifacts=artifacts,
+    )
+    adapter = CounterAdapter()
+    second.start(adapter)
+    second.boundary(boundary=Boundary(name="counter", sequence=1), adapter=adapter)
+    status = statuses.fetch_status("run")
+    assert status is not None
+    assert status.checkpoint is not None
+    bundle = tmp_path / "fresh-restart.hfjob"
+    artifacts.get_checkpoint(status.checkpoint, bundle)
+    assert read_manifest(bundle).previous_checkpoint_sha256 is None
 
 
 def test_start_rejects_resume_for_restart_adapter(tmp_path: Path) -> None:

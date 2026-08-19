@@ -470,6 +470,14 @@ export class CheckpointCoordinator {
     adapter: CheckpointAdapter<RestoreEvidence>,
   ): Promise<RestoreResult<RestoreEvidence> | null> {
     validateAdapterSpec(adapter.spec);
+    if (
+      adapter.spec.resume_mode === "restart" ||
+      adapter.spec.resume_mode === "unsupported"
+    ) {
+      throw new Error(
+        `adapter ${adapter.spec.name} does not support checkpoint restore`,
+      );
+    }
     const chain = await this.#loadChain();
     if (chain.length === 0) return null;
     const head = chain.at(-1);
